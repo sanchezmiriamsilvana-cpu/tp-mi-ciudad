@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "tp-mi-ciudad",
+    "slug": "tp-mi-ciudad",
+    "scheme": "miciudad",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.miciudad.colon",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyDgh5KMFmHarSV2qTE7aByROvULl_bWb1w"
+        }
+      },
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-sqlite",
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-audio",
+        {
+          "enableBackgroundRecording": true,
+          "microphonePermission": false
+        }
+      ],
+      "expo-notifications"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "9468dd81-daa9-4632-a7ee-67d5dbb23cf3"
+      }
+    }
+  }
+}
