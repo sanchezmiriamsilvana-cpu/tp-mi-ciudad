@@ -1,151 +1,147 @@
+import * as SQLite from 'expo-sqlite';
 import { api } from './api';
-import { obtenerConexionDB, inicializarBaseDatos } from './db';
 import { Visita, RegistrarVisitaDTO } from '../tipos/visitas';
 
-const USUARIO_DEFAULT = 'usuario_invitado';
+const NOMBRE_DB = 'miciudad.db';
 
-// ==========================================
-// 1. PETICIONES A LA API (NestJS)
-// ==========================================
+// Inicialización de la base de datos SQLite local
+async function obtenerDB() {
+  const db = await SQLite.openDatabaseAsync(NOMBRE_DB);
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS visitas (
+      id TEXT PRIMARY KEY NOT NULL,
+      usuarioId TEXT,
+      lugarId TEXT NOT NULL,
+      fechaHora TEXT NOT NULL,
+      origen TEXT NOT NULL,
+      fotoUri TEXT,
+      nota TEXT,
+      sincronizada INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  return db;
+}
 
-export async function obtenerVisitasAPI(): Promise<Visita[]> {
+/**
+ * 1. Obtener todas las visitas almacenadas localmente en el teléfono (SQLite)
+ */
+export async function obtenerVisitasLocales(): Promise<Visita[]> {
   try {
-    const respuesta = await api.get<Visita[]>('/yo/visitas');
-    return respuesta.data;
+    const db = await obtenerDB();
+    const filas = await db.getAllAsync<any>('SELECT * FROM visitas ORDER BY fechaHora DESC;');
+    
+    return filas.map((row) => ({
+      id: row.id,
+      usuarioId: row.usuarioId || undefined,
+      lugarId: row.lugarId,
+      fechaHora: row.fechaHora,
+      origen: row.origen,
+      fotoUri: row.fotoUri,
+      nota: row.nota,
+      sincronizada: row.sincronizada === 1,
+    }));
   } catch (error) {
-    console.warn('API no disponible. Se usarán visitas locales:', error);
+    console.error('Error al obtener visitas locales:', error);
     return [];
   }
 }
 
-export async function registrarVisitaAPI(dto: RegistrarVisitaDTO): Promise<Visita | null> {
+/**
+ * 2. Guardar una nueva visita localmente en SQLite
+ */
+export async function guardarVisitaLocal(visita: Visita): Promise<void> {
   try {
-    const respuesta = await api.post<Visita>('/yo/visitas', dto);
-    return respuesta.data;
-  } catch (error) {
-    console.error('Error al registrar visita en API:', error);
-    return null;
-  }
-}
-
-export async function actualizarVisitaAPI(
-  id: string,
-  datos: { fotoUri?: string; nota?: string }
-): Promise<boolean> {
-  try {
-    await api.patch(`/yo/visitas/${id}`, datos);
-    return true;
-  } catch (error) {
-    console.error('Error al actualizar visita en API:', error);
-    return false;
-  }
-}
-
-// ==========================================
-// 2. BASE DE DATOS LOCAL (SQLite Offline)
-// ==========================================
-
-export async function guardarVisitaLocal(visita: Visita): Promise<boolean> {
-  try {
-    await inicializarBaseDatos();
-    const db = await obtenerConexionDB();
-    const fecha = visita.fechaHora || new Date().toISOString();
-    const usuarioId = visita.usuarioId || USUARIO_DEFAULT;
-    const sinc = visita.sincronizada ? 1 : 0;
-
+    const db = await obtenerDB();
     await db.runAsync(
-      `INSERT INTO visitas (id, usuarioId, lugarId, fechaHora, origen, fotoUri, nota, sincronizada)
+      `INSERT OR REPLACE INTO visitas (id, usuarioId, lugarId, fechaHora, origen, fotoUri, nota, sincronizada)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
       [
         visita.id,
-        usuarioId,
+        visita.usuarioId || null,
         visita.lugarId,
-        fecha,
+        visita.fechaHora,
         visita.origen,
         visita.fotoUri || null,
         visita.nota || null,
-        sinc,
+        visita.sincronizada ? 1 : 0,
       ]
     );
-    return true;
   } catch (error) {
-    console.error('Error al guardar visita local en SQLite:', error);
+    console.error('Error al guardar visita local:', error);
+  }
+}
+
+/**
+ * 3. Actualizar la foto o la nota de una visita existente en SQLite
+ */
+export async function actualizarVisitaLocal(
+  id: string,
+  datos: { nota?: string; fotoUri?: string | null }
+): Promise<void> {
+  try {
+    const db = await obtenerDB();
+    await db.runAsync(
+      `UPDATE visitas SET nota = COALESCE(?, nota), fotoUri = COALESCE(?, fotoUri) WHERE id = ?;`,
+      [datos.nota || null, datos.fotoUri || null, id]
+    );
+  } catch (error) {
+    console.error('Error al actualizar visita local:', error);
+  }
+}
+
+/**
+ * 4. Registrar la visita en el backend/API
+ */
+export async function registrarVisitaAPI(datos: RegistrarVisitaDTO): Promise<boolean> {
+  try {
+    const respuesta = await api.post('/yo/visitas', datos);
+    return respuesta.status === 200 || respuesta.status === 201;
+  } catch (error) {
+    console.warn('API no disponible. La visita quedó guardada únicamente de forma local.');
     return false;
   }
 }
 
 /**
- * Actualiza la nota y la foto de una visita en la base de datos local SQLite
+ * 5. Actualizar los detalles de la visita en la API (foto / nota)
  */
-export async function actualizarVisitaLocal(
+export async function actualizarVisitaAPI(
   id: string,
-  datos: { fotoUri?: string | null; nota?: string }
+  datos: { nota?: string; fotoUri?: string }
 ): Promise<boolean> {
   try {
-    await inicializarBaseDatos();
-    const db = await obtenerConexionDB();
-
-    await db.runAsync(
-      `UPDATE visitas 
-       SET nota = COALESCE(?, nota), 
-           fotoUri = COALESCE(?, fotoUri), 
-           sincronizada = 0 
-       WHERE id = ?;`,
-      [datos.nota ?? null, datos.fotoUri ?? null, id]
-    );
-    return true;
+    const respuesta = await api.patch(`/yo/visitas/${id}`, datos);
+    return respuesta.status === 200;
   } catch (error) {
-    console.error('Error al actualizar visita local en SQLite:', error);
+    console.warn('No se pudo sincronizar la nota/foto con el servidor.');
     return false;
   }
 }
 
-export async function obtenerVisitasLocales(usuarioId?: string): Promise<Visita[]> {
-  try {
-    await inicializarBaseDatos();
-    const db = await obtenerConexionDB();
-    const idSeguro = usuarioId && usuarioId.trim() !== '' ? usuarioId : USUARIO_DEFAULT;
-
-    const filas = await db.getAllAsync<any>(
-      'SELECT * FROM visitas WHERE usuarioId = ? ORDER BY fechaHora DESC;',
-      [idSeguro]
-    );
-
-    return filas.map((f) => ({
-      ...f,
-      sincronizada: Boolean(f.sincronizada),
-    }));
-  } catch (error) {
-    console.error('Error al consultar visitas locales:', error);
-    return [];
-  }
-}
-
+/**
+ * 6. Intentar sincronizar con el servidor las visitas que quedaron offline (sincronizada = 0)
+ */
 export async function sincronizarVisitasPendientes(): Promise<void> {
   try {
-    await inicializarBaseDatos();
-    const db = await obtenerConexionDB();
-
+    const db = await obtenerDB();
     const pendientes = await db.getAllAsync<any>(
       'SELECT * FROM visitas WHERE sincronizada = 0;'
     );
 
-    for (const v of pendientes) {
-      const exito = await registrarVisitaAPI({
-        lugarId: v.lugarId,
-        origen: v.origen,
-        fotoUri: v.fotoUri,
-        nota: v.nota,
-      });
+    for (const item of pendientes) {
+      const datosDTO: RegistrarVisitaDTO = {
+        lugarId: item.lugarId,
+        origen: item.origen,
+        fotoUri: item.fotoUri || undefined,
+        nota: item.nota || undefined,
+      };
 
+      const exito = await registrarVisitaAPI(datosDTO);
       if (exito) {
-        await db.runAsync(
-          'UPDATE visitas SET sincronizada = 1 WHERE id = ?;',
-          [v.id]
-        );
+        await db.runAsync('UPDATE visitas SET sincronizada = 1 WHERE id = ?;', [item.id]);
       }
     }
   } catch (error) {
-    console.error('Error durante la sincronización de visitas:', error);
+    console.error('Error al sincronizar visitas pendientes:', error);
   }
 }
