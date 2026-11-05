@@ -1,18 +1,23 @@
 import { Favorito } from '../tipos/favoritos';
-import { obtenerConexionDB, inicializarBaseDatos, resetearConexionDB } from './db';
+import { obtenerConexionDB } from './db';
 
 const USUARIO_DEFAULT = 'usuario_invitado';
 
 export async function inicializarBaseDatosFavoritos(): Promise<void> {
-  return await inicializarBaseDatos();
+  await obtenerConexionDB();
 }
 
-export async function obtenerFavoritosPorUsuario(usuarioId?: string): Promise<Favorito[]> {
-  const idSeguro = usuarioId && usuarioId.trim() !== '' ? usuarioId : USUARIO_DEFAULT;
+function sanitizarUsuarioId(usuarioId?: string | null): string {
+  if (!usuarioId || typeof usuarioId !== 'string' || usuarioId.trim() === '') {
+    return USUARIO_DEFAULT;
+  }
+  return usuarioId.trim();
+}
 
+export async function obtenerFavoritosPorUsuario(usuarioId?: string | null): Promise<Favorito[]> {
   try {
-    await inicializarBaseDatos();
     const db = await obtenerConexionDB();
+    const idSeguro = sanitizarUsuarioId(usuarioId);
 
     const resultado = await db.getAllAsync<Favorito>(
       'SELECT * FROM favoritos WHERE usuarioId = ? ORDER BY creadoEn DESC;',
@@ -21,48 +26,47 @@ export async function obtenerFavoritosPorUsuario(usuarioId?: string): Promise<Fa
     return resultado || [];
   } catch (error) {
     console.error('Error al obtener favoritos:', error);
-    resetearConexionDB();
     return [];
   }
 }
 
-export async function obtenerFavoritosIds(usuarioId?: string): Promise<string[]> {
-  const lista = await obtenerFavoritosPorUsuario(usuarioId);
+export async function obtenerFavoritosIds(usuarioId?: string | null): Promise<string[]> {
+  const idSeguro = sanitizarUsuarioId(usuarioId);
+  const lista = await obtenerFavoritosPorUsuario(idSeguro);
   return lista.map((item) => item.lugarId);
 }
 
-export async function alternarFavorito(lugarId: string, usuarioId?: string): Promise<boolean> {
-  if (!lugarId) return false;
-  const idSeguro = usuarioId && usuarioId.trim() !== '' ? usuarioId : USUARIO_DEFAULT;
+export async function alternarFavorito(lugarId: string, usuarioId?: string | null): Promise<boolean> {
+  if (!lugarId || typeof lugarId !== 'string') return false;
 
   try {
-    await inicializarBaseDatos();
     const db = await obtenerConexionDB();
+    const idSeguro = sanitizarUsuarioId(usuarioId);
+    const lugarIdLimpio = lugarId.trim();
 
     const existe = await db.getFirstAsync<Favorito>(
       'SELECT * FROM favoritos WHERE usuarioId = ? AND lugarId = ?;',
-      [idSeguro, lugarId]
+      [idSeguro, lugarIdLimpio]
     );
 
     if (existe) {
       await db.runAsync(
         'DELETE FROM favoritos WHERE usuarioId = ? AND lugarId = ?;',
-        [idSeguro, lugarId]
+        [idSeguro, lugarIdLimpio]
       );
       return false;
     } else {
-      const nuevoId = `fav-${Date.now().toString()}`;
+      const nuevoId = `fav-${Date.now()}`;
       const fecha = new Date().toISOString();
 
       await db.runAsync(
         'INSERT INTO favoritos (id, usuarioId, lugarId, creadoEn) VALUES (?, ?, ?, ?);',
-        [nuevoId, idSeguro, lugarId, fecha]
+        [nuevoId, idSeguro, lugarIdLimpio, fecha]
       );
       return true;
     }
   } catch (error) {
     console.error('Error al alternar favorito:', error);
-    resetearConexionDB();
     return false;
   }
 }

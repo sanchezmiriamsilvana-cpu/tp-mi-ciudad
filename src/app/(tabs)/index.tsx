@@ -31,37 +31,64 @@ import {
   COLON_CENTRO,
 } from '../../servicios/ubicacion';
 
-// 🎨 Hook del Tema Global (Modo Claro / Oscuro)
 import { useTema } from '../../contexto/TemaContext';
+import { BASE_URL } from '../../servicios/api';
+
+const IMAGEN_DEFAULT = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSYwl49SBaAWa5x5iCzdte_NsHghIRZiSWyphHOVNp6aw&s';
+
+// 🟢 Helper seguro para obtener la URL de imagen y reemplazar localhost por BASE_URL
+const obtenerImagenSegura = (imagenes: any): string => {
+  if (!imagenes) return IMAGEN_DEFAULT;
+
+  // Extraemos la primera posición si viene como arreglo
+  let url = Array.isArray(imagenes) && imagenes.length > 0 ? imagenes[0] : imagenes;
+
+  if (typeof url === 'object' && url !== null) {
+    url = url.url || url.uri || '';
+  }
+
+  if (typeof url !== 'string' || url.trim() === '') return IMAGEN_DEFAULT;
+
+  url = url.trim();
+
+  // Si viene localhost:3000 de la API, se adapta a la BASE_URL activa de DevTunnels
+  if (url.includes('localhost:3000')) {
+    const urlLimpia = BASE_URL.replace(/\/$/, '');
+    return url.replace('http://localhost:3000', urlLimpia);
+  }
+
+  return url;
+};
+
+// 🟢 Helper que verifica si el lugar cuenta con audioguía disponible
+const tieneAudioguia = (lugar: any): boolean => {
+  if (!lugar) return false;
+  const audio = lugar.audioUrl || lugar.audio || lugar.audioguia || lugar.audiolibro;
+  if (typeof audio === 'string') return audio.trim().length > 0;
+  return Boolean(audio);
+};
 
 export default function PantallaPrincipal() {
   const { colores } = useTema();
 
   const [lugares, setLugares] = useState<Lugar[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
-  
-  // 🏷️ Arreglo de IDs para selección múltiple de filtros
   const [categoriasSeleccionadas, setCategoriasSeleccionadas] = useState<string[]>(['cat-todas']);
   const [busquedaLugar, setBusquedaLugar] = useState<string>('');
   
-  // 🗺️ Vista inicial por defecto
   const [modoVista, setModoVista] = useState<'mapa' | 'lista'>('mapa');
   const [cargando, setCargando] = useState<boolean>(true);
-
-  // 📍 Lugar seleccionado para la tarjeta flotante en el mapa
   const [lugarSeleccionado, setLugarSeleccionado] = useState<any | null>(null);
 
-  // Ubicación del usuario y lista de Favoritos SQLite
   const [miUbicacion, setMiUbicacion] = useState<Coordenadas | null>(null);
   const [favoritosIds, setFavoritosIds] = useState<string[]>([]);
 
-  // 1. Cargar categorías, ubicación e inicializar base de datos
   useEffect(() => {
     async function inicializar() {
       try {
         await inicializarBaseDatosFavoritos();
         const resCategorias = await obtenerCategorias();
-        setCategorias(resCategorias.datos || []);
+        setCategorias(resCategorias.datos || resCategorias || []);
 
         const pos = await obtenerUbicacionActual();
         if (pos) setMiUbicacion(pos);
@@ -72,7 +99,6 @@ export default function PantallaPrincipal() {
     inicializar();
   }, []);
 
-  // 2. Recargar datos cuando la pantalla toma foco o cambia la búsqueda
   useFocusEffect(
     useCallback(() => {
       cargarDatos();
@@ -82,24 +108,19 @@ export default function PantallaPrincipal() {
   const cargarDatos = async () => {
     setCargando(true);
     try {
-      const token = await obtenerToken();
-      if (!token) {
-        setFavoritosIds([]);
-      } else {
-        const favs = await obtenerFavoritosIds();
-        setFavoritosIds(favs);
-      }
+      const favs = await obtenerFavoritosIds();
+      setFavoritosIds(Array.isArray(favs) ? favs : []);
 
       const resLugares = await obtenerLugares(busquedaLugar);
-      setLugares(resLugares.datos || []);
+      const lista: Lugar[] = resLugares.datos || resLugares || [];
+      setLugares(Array.isArray(lista) ? lista : []);
     } catch (error) {
-      console.error('Error al cargar lugares:', error);
+      console.error('Error al cargar lugares de la API:', error);
     } finally {
       setCargando(false);
     }
   };
 
-  // 🏷️ Lógica para activar/desactivar filtros múltiples
   const handleToggleCategoria = (catId: string) => {
     if (catId === 'cat-todas') {
       setCategoriasSeleccionadas(['cat-todas']);
@@ -108,7 +129,6 @@ export default function PantallaPrincipal() {
 
     setCategoriasSeleccionadas((prev) => {
       const sinTodas = prev.filter((id) => id !== 'cat-todas');
-
       if (sinTodas.includes(catId)) {
         const filtradas = sinTodas.filter((id) => id !== catId);
         return filtradas.length === 0 ? ['cat-todas'] : filtradas;
@@ -118,17 +138,15 @@ export default function PantallaPrincipal() {
     });
   };
 
-  // 👤 Navegación al Perfil protegida por sesión
   const handleIrAPerfil = async () => {
     const token = await obtenerToken();
     if (!token) {
       router.push('/login');
     } else {
-      router.push('/perfil'); // Ajustá a '/yo' si tu archivo se llama yo.tsx
+      router.push('/perfil');
     }
   };
 
-  // ❤️ Navegación a la lista de Favoritos protegida por sesión
   const handleIrAFavoritos = async () => {
     const token = await obtenerToken();
     if (!token) {
@@ -138,10 +156,9 @@ export default function PantallaPrincipal() {
     }
   };
 
-  // ❤️ Alternar estado de favorito en SQLite (protegido por sesión)
+  // 🔒 Alterna favorito pidiendo autenticación
   const handleToggleFavorito = async (lugarId: string) => {
     const token = await obtenerToken();
-
     if (!token) {
       router.push('/login');
       return;
@@ -149,10 +166,9 @@ export default function PantallaPrincipal() {
 
     await alternarFavorito(lugarId);
     const favsActualizados = await obtenerFavoritosIds();
-    setFavoritosIds(favsActualizados);
+    setFavoritosIds(Array.isArray(favsActualizados) ? favsActualizados : []);
   };
 
-  // 🔍 Filtrado cliente por múltiples categorías
   const lugaresFiltrados = lugares.filter((lugar) => {
     if (
       categoriasSeleccionadas.includes('cat-todas') ||
@@ -163,14 +179,12 @@ export default function PantallaPrincipal() {
     return categoriasSeleccionadas.includes(lugar.categoriaId);
   });
 
-  // 📍 Calcular distancias ordenadas sobre los lugares filtrados
   const origen = miUbicacion || COLON_CENTRO;
   const lugaresConDistancia = lugaresFiltrados
     .map((lugar) => {
-      const dist = calcularDistanciaKm(origen, {
-        latitud: lugar.coordenadas.latitud,
-        longitud: lugar.coordenadas.longitud,
-      });
+      const lat = lugar.coordenadas?.latitud || COLON_CENTRO.latitud;
+      const lng = lugar.coordenadas?.longitud || COLON_CENTRO.longitud;
+      const dist = calcularDistanciaKm(origen, { latitud: lat, longitud: lng });
       return { ...lugar, distanciaKm: dist };
     })
     .sort((a, b) => a.distanciaKm - b.distanciaKm);
@@ -190,10 +204,17 @@ export default function PantallaPrincipal() {
             </Text>
           </View>
 
-          {/* Botones de Acceso Rápido del Encabezado */}
           <View style={styles.headerButtons}>
             <TouchableOpacity 
               style={styles.iconButton} 
+              accessibilityLabel="Audioguías"
+              onPress={() => router.push('/audioguias' as any)}
+            >
+              <Ionicons name="headset-outline" size={22} color="#0284c7" />
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[styles.iconButton, { marginLeft: 8 }]} 
               onPress={handleIrAFavoritos}
             >
               <Ionicons name="heart-outline" size={22} color="#0284c7" />
@@ -223,62 +244,55 @@ export default function PantallaPrincipal() {
           />
         </View>
 
-        {/* Chips de Categorías (Múltiple Selección) */}
-        <View style={styles.categoriesWrapper}>
-          <FlatList
-            horizontal
-            data={categorias}
-            keyExtractor={(item) => item.id}
-            showsHorizontalScrollIndicator={false}
-            renderItem={({ item }) => {
-              const esActiva = categoriasSeleccionadas.includes(item.id);
-              return (
-                <TouchableOpacity
-                  style={[
-                    styles.categoryChip,
-                    esActiva
-                      ? styles.categoryChipActive
-                      : { backgroundColor: colores.tarjetaFondo, borderColor: colores.tarjetaBorde },
-                  ]}
-                  onPress={() => handleToggleCategoria(item.id)}
-                >
-                  <Ionicons
-                    name={(item.icono as any) || 'pricetag-outline'}
-                    size={16}
-                    color={esActiva ? '#FFF' : colores.textoSecundario}
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text
+        {/* Chips de Categorías */}
+        {categorias.length > 0 && (
+          <View style={styles.categoriesWrapper}>
+            <FlatList
+              horizontal
+              data={categorias}
+              keyExtractor={(item) => item.id}
+              showsHorizontalScrollIndicator={false}
+              renderItem={({ item }) => {
+                const esActiva = categoriasSeleccionadas.includes(item.id);
+                return (
+                  <TouchableOpacity
                     style={[
-                      styles.categoryChipText,
-                      esActiva ? styles.categoryChipTextActive : { color: colores.textoSecundario },
+                      styles.categoryChip,
+                      esActiva
+                        ? styles.categoryChipActive
+                        : { backgroundColor: colores.tarjetaFondo, borderColor: colores.tarjetaBorde },
                     ]}
+                    onPress={() => handleToggleCategoria(item.id)}
                   >
-                    {item.nombre}
-                  </Text>
-                </TouchableOpacity>
-              );
-            }}
-          />
-        </View>
+                    <Ionicons
+                      name={(item.icono as any) || 'pricetag-outline'}
+                      size={16}
+                      color={esActiva ? '#FFF' : colores.textoSecundario}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text
+                      style={[
+                        styles.categoryChipText,
+                        esActiva ? styles.categoryChipTextActive : { color: colores.textoSecundario },
+                      ]}
+                    >
+                      {item.nombre}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </View>
+        )}
 
-        {/* Selector de Vista: Mapa 🗺️ vs Lista 📋 */}
+        {/* Selector Mapa vs Lista */}
         <View style={[styles.toggleContainer, { backgroundColor: colores.tarjetaFondo, borderColor: colores.tarjetaBorde }]}>
           <TouchableOpacity
             style={[styles.toggleBtn, modoVista === 'mapa' && styles.toggleBtnActive]}
             onPress={() => setModoVista('mapa')}
           >
-            <Ionicons
-              name="map"
-              size={18}
-              color={modoVista === 'mapa' ? '#FFF' : colores.textoSecundario}
-            />
-            <Text
-              style={[
-                styles.toggleText,
-                modoVista === 'mapa' ? styles.toggleTextActive : { color: colores.textoSecundario },
-              ]}
-            >
+            <Ionicons name="map" size={18} color={modoVista === 'mapa' ? '#FFF' : colores.textoSecundario} />
+            <Text style={[styles.toggleText, modoVista === 'mapa' ? styles.toggleTextActive : { color: colores.textoSecundario }]}>
               Mapa
             </Text>
           </TouchableOpacity>
@@ -287,23 +301,13 @@ export default function PantallaPrincipal() {
             style={[styles.toggleBtn, modoVista === 'lista' && styles.toggleBtnActive]}
             onPress={() => setModoVista('lista')}
           >
-            <Ionicons
-              name="list"
-              size={18}
-              color={modoVista === 'lista' ? '#FFF' : colores.textoSecundario}
-            />
-            <Text
-              style={[
-                styles.toggleText,
-                modoVista === 'lista' ? styles.toggleTextActive : { color: colores.textoSecundario },
-              ]}
-            >
+            <Ionicons name="list" size={18} color={modoVista === 'lista' ? '#FFF' : colores.textoSecundario} />
+            <Text style={[styles.toggleText, modoVista === 'lista' ? styles.toggleTextActive : { color: colores.textoSecundario }]}>
               Lista
             </Text>
           </TouchableOpacity>
         </View>
 
-        {/* Contenido Principal */}
         {cargando ? (
           <ActivityIndicator size="large" color="#0284c7" style={{ marginTop: 40 }} />
         ) : modoVista === 'mapa' ? (
@@ -320,31 +324,23 @@ export default function PantallaPrincipal() {
               }}
               onPress={() => setLugarSeleccionado(null)}
             >
-              {lugaresConDistancia
-                .filter(
-                  (lugar) =>
-                    lugar &&
-                    lugar.coordenadas &&
-                    typeof lugar.coordenadas.latitud === 'number' &&
-                    typeof lugar.coordenadas.longitud === 'number'
-                )
-                .map((lugar) => (
-                  <Marker
-                    key={lugar.id}
-                    coordinate={{
-                      latitude: lugar.coordenadas.latitud,
-                      longitude: lugar.coordenadas.longitud,
-                    }}
-                    title={lugar.nombre}
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      setLugarSeleccionado(lugar);
-                    }}
-                  />
-                ))}
+              {lugaresConDistancia.map((lugar) => (
+                <Marker
+                  key={lugar.id}
+                  coordinate={{
+                    latitude: lugar.coordenadas?.latitud || COLON_CENTRO.latitud,
+                    longitude: lugar.coordenadas?.longitud || COLON_CENTRO.longitud,
+                  }}
+                  title={lugar.nombre}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    setLugarSeleccionado(lugar);
+                  }}
+                />
+              ))}
             </MapView>
 
-            {/* 🎴 Tarjeta Flotante en el Mapa */}
+            {/* Tarjeta Flotante en el Mapa */}
             {lugarSeleccionado && (
               <View style={[
                 styles.tarjetaFlotante, 
@@ -359,24 +355,32 @@ export default function PantallaPrincipal() {
 
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Image 
-                    source={{ 
-                      uri: Array.isArray(lugarSeleccionado.imagenes) 
-                        ? lugarSeleccionado.imagenes 
-                        : lugarSeleccionado.imagenes 
-                    }} 
+                    source={{ uri: obtenerImagenSegura(lugarSeleccionado.imagenes) }} 
                     style={styles.tarjetaFlotanteImg} 
+                    resizeMode="cover"
                   />
                   <View style={{ flex: 1, marginLeft: 12 }}>
                     <Text style={[styles.tarjetaFlotanteTitulo, { color: colores.textoPrincipal }]} numberOfLines={1}>
                       {lugarSeleccionado.nombre}
                     </Text>
                     <Text style={{ fontSize: 12, color: '#0284c7', marginTop: 2, fontWeight: '500' }}>
-                      📍 A {formatearDistancia(lugarSeleccionado.distanciaKm)} de vos
+                      📍 A {formatearDistancia(lugarSeleccionado.distanciaKm)}
                     </Text>
                   </View>
                 </View>
 
-                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10, gap: 8 }}>
+                  {/* 🎧 Muestra Audioguía SOLO si el lugar la posee */}
+                  {tieneAudioguia(lugarSeleccionado) && (
+                    <TouchableOpacity 
+                      style={styles.btnAudioguiaFlotante} 
+                      onPress={() => router.push('/audioguias' as any)}
+                    >
+                      <Ionicons name="headset" size={14} color="#0284c7" />
+                      <Text style={styles.btnAudioguiaTexto}>Audioguía</Text>
+                    </TouchableOpacity>
+                  )}
+
                   <TouchableOpacity 
                     style={styles.btnVerDetalle} 
                     onPress={() => router.push(`/lugar/${lugarSeleccionado.id}` as any)}
@@ -395,7 +399,8 @@ export default function PantallaPrincipal() {
             contentContainerStyle={{ paddingBottom: 20 }}
             renderItem={({ item }) => {
               const esFav = favoritosIds.includes(item.id);
-              const imagenUri = Array.isArray(item.imagenes) ? item.imagenes[0] : item.imagenes;
+              const imagenUri = obtenerImagenSegura(item.imagenes);
+              const poseeAudio = tieneAudioguia(item);
 
               return (
                 <TouchableOpacity
@@ -406,14 +411,17 @@ export default function PantallaPrincipal() {
                   onPress={() => router.push(`/lugar/${item.id}` as any)}
                   activeOpacity={0.8}
                 >
-                  <Image source={{ uri: imagenUri }} style={styles.cardImage} />
+                  <Image 
+                    source={{ uri: imagenUri }} 
+                    style={styles.cardImage} 
+                    resizeMode="cover"
+                  />
                   <View style={styles.cardContent}>
                     <View style={styles.cardHeader}>
                       <Text style={[styles.cardTitle, { color: colores.textoPrincipal }]}>
                         {item.nombre}
                       </Text>
 
-                      {/* Botón de Favorito */}
                       <TouchableOpacity
                         onPress={() => handleToggleFavorito(item.id)}
                         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -432,22 +440,35 @@ export default function PantallaPrincipal() {
 
                     <View style={styles.cardFooter}>
                       <Text style={styles.distanciaText}>
-                        📍 A {formatearDistancia(item.distanciaKm)} de vos
+                        📍 A {formatearDistancia(item.distanciaKm)}
                       </Text>
 
-                      <TouchableOpacity
-                        style={styles.btnIr}
-                        onPress={() =>
-                          abrirMapaNativo(
-                            item.coordenadas.latitud,
-                            item.coordenadas.longitud,
-                            item.nombre
-                          )
-                        }
-                      >
-                        <Ionicons name="navigate-outline" size={14} color="#0284c7" />
-                        <Text style={styles.btnIrTexto}>Ir</Text>
-                      </TouchableOpacity>
+                      <View style={{ flexDirection: 'row', gap: 6 }}>
+                        {/* 🎧 Muestra Audioguía SOLO si el lugar la posee */}
+                        {poseeAudio && (
+                          <TouchableOpacity
+                            style={styles.btnAudioguiaCard}
+                            onPress={() => router.push('/audioguias' as any)}
+                          >
+                            <Ionicons name="headset-outline" size={14} color="#0284c7" />
+                            <Text style={styles.btnAudioguiaTexto}>Audioguía</Text>
+                          </TouchableOpacity>
+                        )}
+
+                        <TouchableOpacity
+                          style={styles.btnIr}
+                          onPress={() =>
+                            abrirMapaNativo(
+                              item.coordenadas?.latitud || COLON_CENTRO.latitud,
+                              item.coordenadas?.longitud || COLON_CENTRO.longitud,
+                              item.nombre
+                            )
+                          }
+                        >
+                          <Ionicons name="navigate-outline" size={14} color="#0284c7" />
+                          <Text style={styles.btnIrTexto}>Ir</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   </View>
                 </TouchableOpacity>
@@ -496,7 +517,6 @@ const styles = StyleSheet.create({
   categoryChipText: { fontSize: 14, fontWeight: '500' },
   categoryChipTextActive: { color: '#FFF', fontWeight: 'bold' },
   
-  /* Toggle Lista / Mapa */
   toggleContainer: {
     flexDirection: 'row',
     borderRadius: 10,
@@ -516,7 +536,6 @@ const styles = StyleSheet.create({
   toggleText: { fontSize: 14, fontWeight: '600', marginLeft: 6 },
   toggleTextActive: { color: '#FFF' },
 
-  /* Mapa y Tarjeta Flotante */
   mapWrapper: { flex: 1, borderRadius: 12, overflow: 'hidden', marginBottom: 12, position: 'relative' },
   mapa: { width: '100%', height: '100%' },
   tarjetaFlotante: {
@@ -528,47 +547,22 @@ const styles = StyleSheet.create({
     padding: 12,
     borderWidth: 1,
     elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
   },
-  cerrarCardBtn: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    zIndex: 10,
-  },
-  tarjetaFlotanteImg: {
-    width: 50,
-    height: 50,
-    borderRadius: 8,
-  },
-  tarjetaFlotanteTitulo: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginRight: 16,
-  },
-  btnVerDetalle: {
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 12,
+  cerrarCardBtn: { position: 'absolute', top: 8, right: 8, zIndex: 10 },
+  tarjetaFlotanteImg: { width: 50, height: 50, borderRadius: 8 },
+  tarjetaFlotanteTitulo: { fontSize: 16, fontWeight: 'bold', marginRight: 16 },
+  btnVerDetalle: { backgroundColor: '#007AFF', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  btnVerDetalleTexto: { color: '#FFF', fontSize: 12, fontWeight: 'bold' },
+  btnAudioguiaFlotante: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e0f2fe',
+    paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
   },
-  btnVerDetalleTexto: {
-    color: '#FFF',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
 
-  /* Tarjetas de Lista */
-  card: {
-    borderRadius: 12,
-    marginBottom: 16,
-    overflow: 'hidden',
-    borderWidth: 1,
-    elevation: 2,
-  },
+  card: { borderRadius: 12, marginBottom: 16, overflow: 'hidden', borderWidth: 1, elevation: 2 },
   cardImage: { width: '100%', height: 160 },
   cardContent: { padding: 14 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
@@ -576,6 +570,19 @@ const styles = StyleSheet.create({
   cardDescription: { fontSize: 14, marginVertical: 8, lineHeight: 20 },
   cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 },
   distanciaText: { fontSize: 13, color: '#0284c7', fontWeight: '500' },
+  
+  btnAudioguiaCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0f9ff',
+    borderWidth: 1,
+    borderColor: '#bae6fd',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  btnAudioguiaTexto: { color: '#0284c7', fontWeight: 'bold', marginLeft: 4, fontSize: 12 },
+  
   btnIr: {
     flexDirection: 'row',
     alignItems: 'center',

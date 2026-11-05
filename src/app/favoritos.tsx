@@ -11,11 +11,68 @@ import {
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+
 import { Lugar } from '../tipos/lugares';
 import { obtenerLugares } from '../servicios/lugares';
 import { obtenerFavoritosIds, alternarFavorito } from '../servicios/favoritos';
-import { obtenerUsuario } from '../servicios/autenticacion';
-import { useTema } from '../contexto/TemaContext'; 
+import { useTema } from '../contexto/TemaContext';
+import { BASE_URL } from '../servicios/api';
+
+const IMAGEN_DEFAULT = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSYwl49SBaAWa5x5iCzdte_NsHghIRZiSWyphHOVNp6aw&s';
+
+// 🟢 Helper seguro: procesa cualquier formato de imagen y reemplaza URLs locales por la BASE_URL activa
+const obtenerImagenSegura = (imagenes: any): string => {
+  if (!imagenes) return IMAGEN_DEFAULT;
+
+  let url: any = imagenes;
+
+  // 1. Si viene como un string JSON (ej: '["/uploads/foto.jpg"]')
+  if (typeof url === 'string' && url.trim().startsWith('[')) {
+    try {
+      url = JSON.parse(url);
+    } catch (e) {
+      // Ignorar si no es un JSON válido
+    }
+  }
+
+  // 2. Si es un arreglo, tomamos la primera posición
+  if (Array.isArray(url)) {
+    url = url.length > 0 ? url[0] : '';
+  }
+
+  // 3. Si el elemento resultante es un objeto (ej: { url: '...' })
+  if (typeof url === 'object' && url !== null) {
+    url = url.url || url.uri || url.path || url.imagen || '';
+  }
+
+  // 4. Si no es una cadena válida de texto, devolvemos la imagen por defecto
+  if (typeof url !== 'string' || url.trim() === '') {
+    return IMAGEN_DEFAULT;
+  }
+
+  url = url.trim();
+
+  const hostLimpio = BASE_URL.replace(/\/$/, '');
+
+  // 5. Reemplazar localhost / IPs locales por la BASE_URL de DevTunnels
+  if (url.includes('localhost:3000')) {
+    return url.replace('http://localhost:3000', hostLimpio);
+  }
+  if (url.includes('127.0.0.1:3000')) {
+    return url.replace('http://127.0.0.1:3000', hostLimpio);
+  }
+  if (url.includes('10.0.2.2:3000')) {
+    return url.replace('http://10.0.2.2:3000', hostLimpio);
+  }
+
+  // 6. Si es una ruta relativa (ej: "/uploads/foto.jpg"), le concatenamos la BASE_URL
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    const rutaLimpia = url.startsWith('/') ? url : '/' + url;
+    return `${hostLimpio}${rutaLimpia}`;
+  }
+
+  return url;
+};
 
 export default function FavoritosPantalla() {
   const { colores } = useTema();
@@ -28,25 +85,18 @@ export default function FavoritosPantalla() {
       async function cargarFavoritos() {
         setCargando(true);
         try {
-          // 1. Identificar si hay un usuario en SecureStore o usar el usuario por defecto
-          const usuario = await obtenerUsuario();
-          const usuarioId = usuario?.email || 'usuario_invitado';
-
-          // 2. Obtener los IDs guardados en la base de datos SQLite
-          const favIds = await obtenerFavoritosIds(usuarioId);
+          const favIds = await obtenerFavoritosIds();
 
           if (!favIds || favIds.length === 0) {
             setLugaresFavoritos([]);
           } else {
-            // 3. Obtener el catalogo completo de lugares y filtrar por ID
-            const respuesta = await obtenerLugares();
-            const filtrados = respuesta.datos.filter((lugar) =>
-              favIds.includes(lugar.id)
-            );
+            const res = await obtenerLugares();
+            const lista: Lugar[] = res.datos || res || [];
+            const filtrados = lista.filter((lugar) => favIds.includes(lugar.id));
             setLugaresFavoritos(filtrados);
           }
         } catch (error) {
-          console.error('Error al cargar la lista de favoritos desde SQLite:', error);
+          console.error('Error al cargar la lista de favoritos:', error);
           setLugaresFavoritos([]);
         } finally {
           setCargando(false);
@@ -59,16 +109,11 @@ export default function FavoritosPantalla() {
 
   const handleQuitarFavorito = async (lugarId: string) => {
     try {
-      const usuario = await obtenerUsuario();
-      const usuarioId = usuario?.email || 'usuario_invitado';
-
-      // Eliminar o alternar de SQLite
-      await alternarFavorito(lugarId, usuarioId);
-
-      // Actualizar el estado local para quitar la tarjeta inmediatamente de la lista
+      await alternarFavorito(lugarId);
+      // Elimina la tarjeta inmediatamente del estado local
       setLugaresFavoritos((prev) => prev.filter((item) => item.id !== lugarId));
     } catch (error) {
-      console.error('Error al quitar elemento de favoritos:', error);
+      console.error('Error al quitar de favoritos:', error);
     }
   };
 
@@ -92,12 +137,7 @@ export default function FavoritosPantalla() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ padding: 16 }}
           renderItem={({ item }) => {
-            // Obtencion segura de la URL de la primera imagen
-            const imagenUri = Array.isArray(item.imagenes) && item.imagenes.length > 0
-              ? item.imagenes[0]
-              : typeof item.imagenes === 'string'
-              ? item.imagenes
-              : '[suspicious link removed]';
+            const imagenUri = obtenerImagenSegura(item.imagenes);
 
             return (
               <View
@@ -113,7 +153,11 @@ export default function FavoritosPantalla() {
                   activeOpacity={0.8}
                   onPress={() => router.push(`/lugar/${item.id}` as any)}
                 >
-                  <Image source={{ uri: imagenUri }} style={styles.cardImage} />
+                  <Image
+                    source={{ uri: imagenUri }}
+                    style={styles.cardImage}
+                    resizeMode="cover"
+                  />
                 </TouchableOpacity>
 
                 <View style={styles.cardContent}>
@@ -174,8 +218,7 @@ export default function FavoritosPantalla() {
                   { color: colores.textoSecundario },
                 ]}
               >
-                Pulsá el ícono del corazón en los atractivos turísticos para
-                guardarlos en esta sección.
+                Tocá el ícono del corazón en los atractivos turísticos para guardarlos acá.
               </Text>
             </View>
           }
@@ -186,57 +229,15 @@ export default function FavoritosPantalla() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  card: {
-    borderRadius: 12,
-    marginBottom: 16,
-    overflow: 'hidden',
-    borderWidth: 1,
-    elevation: 2,
-  },
-  cardImage: {
-    width: '100%',
-    height: 160,
-  },
-  cardContent: {
-    padding: 14,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  cardDescription: {
-    fontSize: 14,
-    marginVertical: 8,
-    lineHeight: 20,
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 60,
-    paddingHorizontal: 20,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginTop: 12,
-    marginBottom: 6,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
+  container: { flex: 1 },
+  centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  card: { borderRadius: 12, marginBottom: 16, overflow: 'hidden', borderWidth: 1, elevation: 2 },
+  cardImage: { width: '100%', height: 160 },
+  cardContent: { padding: 14 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  cardTitle: { fontSize: 18, fontWeight: 'bold' },
+  cardDescription: { fontSize: 14, marginVertical: 8, lineHeight: 20 },
+  emptyContainer: { alignItems: 'center', justifyContent: 'center', marginTop: 60, paddingHorizontal: 20 },
+  emptyTitle: { fontSize: 18, fontWeight: 'bold', marginTop: 12, marginBottom: 6 },
+  emptySubtext: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
 });

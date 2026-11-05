@@ -49,10 +49,47 @@ export async function borrarToken(): Promise<void> {
 }
 
 // ==========================================
-// 2. PETICIONES A LA API REAL
+// 2. BIOMETRÍA (expo-local-authentication)
 // ==========================================
 
-//  Iniciar Sesión
+/**
+ * Autentica al usuario con Huella / Rostro.
+ * Verifica disponibilidad de hardware y huellas/rostros guardados antes de escanear.
+ */
+export async function autenticarConBiometria(): Promise<boolean> {
+  try {
+    // 1. Verificar si el dispositivo tiene lector biométrico
+    const hayLector = await LocalAuthentication.hasHardwareAsync();
+    // 2. Verificar si hay huellas o rostro configurados en el celular
+    const hayHuellas = await LocalAuthentication.isEnrolledAsync();
+
+    if (!hayLector || !hayHuellas) {
+      Alert.alert(
+        'Biometría no disponible',
+        'Tu dispositivo no cuenta con sensor biométrico o no tenés huellas/rostro configurados en el sistema.'
+      );
+      return false;
+    }
+
+    // 3. Lanzar el diálogo nativo de huella / rostro
+    const resultado = await LocalAuthentication.authenticateAsync({
+      promptMessage: 'Confirmá tu identidad para ingresar',
+      cancelLabel: 'Cancelar',
+      disableDeviceFallback: false,
+    });
+
+    return resultado.success;
+  } catch (error) {
+    console.error('Error en autenticación biométrica:', error);
+    return false;
+  }
+}
+
+// ==========================================
+// 3. PETICIONES A LA API REAL
+// ==========================================
+
+// Iniciar Sesión
 export async function iniciarSesion(email: string, password: string): Promise<RespuestaAuth> {
   try {
     const respuesta = await fetch(`${BASE_URL}/auth/ingreso`, {
@@ -67,7 +104,7 @@ export async function iniciarSesion(email: string, password: string): Promise<Re
     const json = await respuesta.json();
 
     if (!respuesta.ok) {
-      const mensajeError = json.error?.mensaje || 'Credenciales incorrectas';
+      const mensajeError = json.error?.mensaje || json.mensaje || 'Credenciales incorrectas';
       return { exito: false, mensaje: mensajeError };
     }
 
@@ -82,7 +119,7 @@ export async function iniciarSesion(email: string, password: string): Promise<Re
   }
 }
 
-//  Registrar Usuario
+// Registrar Usuario
 export async function registrarUsuario(
   nombre: string,
   email: string,
@@ -95,14 +132,14 @@ export async function registrarUsuario(
       body: JSON.stringify({
         nombre: nombre.trim(),
         email: email.trim().toLowerCase(),
-        contrasena: password, // 👈 ¡ACÁ TAMBIÉN! Enviamos 'contrasena'
+        contrasena: password,
       }),
     });
 
     const json = await respuesta.json();
 
     if (!respuesta.ok) {
-      const mensajeError = json.error?.mensaje || 'Error al registrar usuario';
+      const mensajeError = json.error?.mensaje || json.mensaje || 'Error al registrar usuario';
       return { exito: false, mensaje: mensajeError };
     }
 
@@ -114,42 +151,5 @@ export async function registrarUsuario(
     return { exito: true, datos: { token, usuario } };
   } catch (error: any) {
     return { exito: false, mensaje: 'No se pudo conectar con el servidor.' };
-  }
-}
-
-// ==========================================
-// 3. BIOMETRÍA
-// ==========================================
-
-export async function autenticarConBiometria(): Promise<boolean> {
-  try {
-    const tieneHardware = await LocalAuthentication.hasHardwareAsync();
-    const estaInscripto = await LocalAuthentication.isEnrolledAsync();
-
-    if (!tieneHardware) {
-      Alert.alert('Diagnóstico', 'El celular no detecta sensor biométrico.');
-      return false;
-    }
-
-    if (!estaInscripto) {
-      Alert.alert('Diagnóstico', 'Falta configurar huella, rostro o PIN en los Ajustes del celular.');
-      return false;
-    }
-
-    const resultado = await LocalAuthentication.authenticateAsync({
-      promptMessage: 'Ingresar a Mi Ciudad Colón',
-      fallbackLabel: 'Usar contraseña',
-      cancelLabel: 'Cancelar',
-      disableDeviceFallback: false,
-    });
-
-    if (!resultado.success) {
-      Alert.alert('Diagnóstico', 'La autenticación no fue exitosa o se canceló.');
-    }
-
-    return resultado.success;
-  } catch (error) {
-    Alert.alert('Error inesperado', String(error));
-    return false;
   }
 }

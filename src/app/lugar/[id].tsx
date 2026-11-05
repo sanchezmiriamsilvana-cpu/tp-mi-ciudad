@@ -26,8 +26,42 @@ import {
 
 import { useTema } from '../../contexto/TemaContext';
 import BrujulaFlecha from '../componentes/BrujulaFlecha';
+import { BASE_URL } from '../../servicios/api';
 
 const DIAS_SEMANA = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+const IMAGEN_DEFAULT = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSYwl49SBaAWa5x5iCzdte_NsHghIRZiSWyphHOVNp6aw&s';
+
+// 🟢 Helper que limpia la URL reemplazando localhost por BASE_URL
+const normalizarUrlImagen = (rawUrl: any): string => {
+  if (!rawUrl || typeof rawUrl !== 'string' || rawUrl.trim() === '') return IMAGEN_DEFAULT;
+  let url = rawUrl.trim();
+  if (url.includes('localhost:3000')) {
+    const urlLimpia = BASE_URL.replace(/\/$/, '');
+    return url.replace('http://localhost:3000', urlLimpia);
+  }
+  return url;
+};
+
+// 🟢 Helper que garantiza un arreglo (string[]) real de fotos válidas
+const obtenerListaImagenes = (imagenes: any): string[] => {
+  if (!imagenes) return [IMAGEN_DEFAULT];
+
+  if (Array.isArray(imagenes)) {
+    if (imagenes.length === 0) return [IMAGEN_DEFAULT];
+    return imagenes.map((img) => normalizarUrlImagen(img));
+  }
+
+  if (typeof imagenes === 'string') {
+    return [normalizarUrlImagen(imagenes)];
+  }
+
+  if (typeof imagenes === 'object' && imagenes !== null) {
+    const uri = imagenes.url || imagenes.uri || '';
+    return [normalizarUrlImagen(uri)];
+  }
+
+  return [IMAGEN_DEFAULT];
+};
 
 export default function DetalleLugarPantalla() {
   const { colores } = useTema();
@@ -40,37 +74,33 @@ export default function DetalleLugarPantalla() {
   const [esFavorito, setEsFavorito] = useState<boolean>(false);
   const [miUbicacion, setMiUbicacion] = useState<Coordenadas | null>(null);
 
-  
-useEffect(() => {
-  async function cargarDetalle() {
-    if (!id) return;
-    setCargando(true);
-    try {
-      // 1. Obtener datos del lugar y favoritos (súper rápido)
-      const res = await obtenerLugarPorId(id);
-      setDetalleLugar(res.datos);
+  useEffect(() => {
+    async function cargarDetalle() {
+      if (!id) return;
+      setCargando(true);
+      try {
+        const res = await obtenerLugarPorId(id);
+        setDetalleLugar(res.datos);
 
-      const favs = await obtenerFavoritosIds();
-      setEsFavorito(favs.includes(id));
-    } catch (error) {
-      console.error('Error al obtener detalle:', error);
-    } finally {
-      setCargando(false); 
+        const favs = await obtenerFavoritosIds();
+        setEsFavorito(Array.isArray(favs) && favs.includes(id));
+      } catch (error) {
+        console.error('Error al obtener detalle:', error);
+      } finally {
+        setCargando(false); 
+      }
+
+      try {
+        const pos = await obtenerUbicacionActual();
+        if (pos) setMiUbicacion(pos);
+      } catch (err) {
+        console.warn('GPS tardó o no estuvo disponible:', err);
+      }
     }
 
-    // 2. Obtener ubicación en segundo plano (sin bloquear la vista)
-    try {
-      const pos = await obtenerUbicacionActual();
-      if (pos) setMiUbicacion(pos);
-    } catch (err) {
-      console.warn('GPS tardó o no estuvo disponible:', err);
-    }
-  }
+    cargarDetalle();
+  }, [id]);
 
-  cargarDetalle();
-}, [id]);
-
-  // Manejo de favorito con validación de autenticación
   const handleToggleFavorito = async () => {
     if (!id) return;
     const token = await obtenerToken();
@@ -81,15 +111,13 @@ useEffect(() => {
 
     await alternarFavorito(id);
     const favsActualizados = await obtenerFavoritosIds();
-    setEsFavorito(favsActualizados.includes(id));
+    setEsFavorito(Array.isArray(favsActualizados) && favsActualizados.includes(id));
   };
 
-  // Acción para llamar por teléfono
   const handleLlamar = (telefono: string) => {
     Linking.openURL(`tel:${telefono}`);
   };
 
-  // Acción para abrir sitio web
   const handleAbrirWeb = (url: string) => {
     const webUrl = url.startsWith('http') ? url : `https://${url}`;
     Linking.openURL(webUrl);
@@ -105,10 +133,8 @@ useEffect(() => {
     );
   }
 
-  // Normalización de imágenes (Maneja un string único o un arreglo de fotos)
-  const listaImagenes: string[] = Array.isArray(detalleLugar.imagenes)
-    ? detalleLugar.imagenes[0]
-    : [detalleLugar.imagenes as any];
+  // 🟢 Normalización correcta que devuelve un arreglo real de imágenes
+  const listaImagenes = obtenerListaImagenes(detalleLugar.imagenes);
 
   return (
     <SafeAreaProvider>
@@ -120,7 +146,7 @@ useEffect(() => {
             <Ionicons name="arrow-back" size={24} color="#FFF" />
           </TouchableOpacity>
 
-          {/* Galería de Imágenes (Horizontal si hay múltiples) */}
+          {/* Galería de Imágenes */}
           {listaImagenes.length > 1 ? (
             <FlatList
               horizontal
@@ -128,15 +154,15 @@ useEffect(() => {
               keyExtractor={(_, index) => index.toString()}
               showsHorizontalScrollIndicator={false}
               renderItem={({ item }) => (
-                <Image source={{ uri: item }} style={styles.detailImageGallery} />
+                <Image source={{ uri: item }} style={styles.detailImageGallery} resizeMode="cover" />
               )}
             />
           ) : (
-            <Image source={{ uri: listaImagenes[0] }} style={styles.detailImage} />
+            <Image source={{ uri: listaImagenes [0]}} style={styles.detailImage} resizeMode="cover" />
           )}
 
           <View style={styles.detailBody}>
-            {/* Título y Botón Corazón (SQLite) */}
+            {/* Título y Botón Corazón */}
             <View style={styles.titleRow}>
               <Text style={[styles.detailTitle, { color: colores.textoPrincipal }]}>
                 {detalleLugar.nombre}
@@ -154,7 +180,7 @@ useEffect(() => {
               📍 {detalleLugar.direccion}
             </Text>
 
-            {/* Botones de Acción Rápida (Ir en Mapa, Llamar, Web) */}
+            {/* Botones de Acción Rápida */}
             <View style={styles.actionRow}>
               <TouchableOpacity
                 style={[styles.actionBtn, { backgroundColor: '#0284c7' }]}
@@ -276,7 +302,6 @@ const styles = StyleSheet.create({
   detailTitle: { fontSize: 24, fontWeight: 'bold', flex: 1, marginRight: 8 },
   detailAddress: { fontSize: 14, marginBottom: 16 },
   
-  /* Botones de Acción */
   actionRow: { flexDirection: 'row', gap: 8, marginBottom: 16, flexWrap: 'wrap' },
   actionBtn: {
     flexDirection: 'row',
@@ -287,7 +312,6 @@ const styles = StyleSheet.create({
   },
   actionBtnText: { color: '#FFF', fontWeight: 'bold', marginLeft: 6, fontSize: 13 },
 
-  /* Card Brújula */
   cardSeccion: {
     padding: 12,
     borderRadius: 12,

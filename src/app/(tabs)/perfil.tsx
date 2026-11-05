@@ -61,13 +61,7 @@ export default function PantallaPerfil() {
 
       // 2. Carga de preferencias guardadas en SQLite
       const db = await obtenerConexionDB();
-      await db.execAsync(`
-        CREATE TABLE IF NOT EXISTS preferencias (
-          clave TEXT PRIMARY KEY NOT NULL,
-          valor TEXT NOT NULL
-        );
-      `);
-
+    
       const regTema = await db.getFirstAsync<{ valor: string }>(
         'SELECT valor FROM preferencias WHERE clave = ?;',
         ['tema_visual']

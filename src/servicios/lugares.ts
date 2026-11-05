@@ -1,5 +1,5 @@
+import { api } from './api';
 import { Lugar, Categoria } from '../tipos/lugares';
-import { MOCK_LUGARES, MOCK_CATEGORIAS } from '../mocks/lugares';
 
 export interface RespuestaServicio<T> {
   exito: boolean;
@@ -7,52 +7,89 @@ export interface RespuestaServicio<T> {
   mensaje?: string;
 }
 
+/**
+ * Obtiene las categorías desde la API real (/categorias)
+ */
 export const obtenerCategorias = async (): Promise<RespuestaServicio<Categoria[]>> => {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve({ exito: true, datos: MOCK_CATEGORIAS });
-    }, 100);
-  });
+  try {
+    const respuesta = await api.get('/categorias');
+    const datos: Categoria[] = respuesta.data?.datos || respuesta.data || [];
+    return { exito: true, datos };
+  } catch (error: any) {
+    console.error('Error al obtener categorías de la API:', error);
+    return {
+      exito: false,
+      datos: [],
+      mensaje: 'Error al conectar con el servidor',
+    };
+  }
 };
 
+/**
+ * Obtiene el listado de lugares desde la API real (/lugares)
+ */
 export const obtenerLugares = async (
   busqueda: string = '',
   categoriaId: string = 'cat-todas'
 ): Promise<RespuestaServicio<Lugar[]>> => {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      let resultado = MOCK_LUGARES;
+  try {
+    const params: Record<string, string> = {};
+    if (busqueda.trim() !== '') {
+      params.q = busqueda.trim();
+    }
+    if (categoriaId && categoriaId !== 'cat-todas') {
+      params.categoriaId = categoriaId;
+    }
 
-      if (busqueda.trim() !== '') {
-        const termino = busqueda.toLowerCase();
-        resultado = resultado.filter(
-          (l) =>
-            l.nombre.toLowerCase().includes(termino) ||
-            l.descripcion.toLowerCase().includes(termino) ||
-            l.descripcionCorta.toLowerCase().includes(termino)
-        );
-      }
+    const respuesta = await api.get('/lugares', { params });
+    let lista: Lugar[] = respuesta.data?.datos || respuesta.data || [];
 
-      if (categoriaId !== 'cat-todas') {
-        resultado = resultado.filter((l) => l.categoriaId === categoriaId);
-      }
+    if (busqueda.trim() !== '') {
+      const termino = busqueda.toLowerCase();
+      lista = lista.filter(
+        (l) =>
+          l.nombre?.toLowerCase().includes(termino) ||
+          l.descripcion?.toLowerCase().includes(termino) ||
+          l.descripcionCorta?.toLowerCase().includes(termino)
+      );
+    }
 
-      resolve({ exito: true, datos: resultado });
-    }, 300);
-  });
+    if (categoriaId !== 'cat-todas') {
+      lista = lista.filter((l) => l.categoriaId === categoriaId);
+    }
+
+    return { exito: true, datos: lista };
+  } catch (error: any) {
+    console.error('Error al obtener lugares de la API:', error);
+    return {
+      exito: false,
+      datos: [],
+      mensaje: 'Error al cargar lugares',
+    };
+  }
 };
 
+/**
+ * Obtiene el detalle de un lugar específico (/lugares/:id)
+ */
 export const obtenerLugarPorId = async (
   id: string
 ): Promise<RespuestaServicio<Lugar | null>> => {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      const lugar = MOCK_LUGARES.find((l) => l.id === id);
-      resolve({
-        exito: !!lugar,
-        datos: lugar || null,
-        mensaje: lugar ? undefined : 'Lugar no encontrado',
-      });
-    }, 200);
-  });
+  try {
+    const respuesta = await api.get(`/lugares/${id}`);
+    const lugar: Lugar = respuesta.data?.datos || respuesta.data || null;
+
+    return {
+      exito: !!lugar,
+      datos: lugar,
+      mensaje: lugar ? undefined : 'Lugar no encontrado',
+    };
+  } catch (error: any) {
+    console.error(`Error al obtener lugar ${id} de la API:`, error);
+    return {
+      exito: false,
+      datos: null,
+      mensaje: 'Error al obtener el detalle del lugar',
+    };
+  }
 };

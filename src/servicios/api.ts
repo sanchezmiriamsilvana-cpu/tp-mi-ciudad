@@ -1,16 +1,8 @@
 import axios from 'axios';
 import { obtenerToken } from './autenticacion';
 
-<<<<<<< HEAD
-// NOTA TÉCNICA: Se configura el túnel y el encabezado 'bypass-tunnel-reminder' 
-// debido a restricciones en la red Wi-Fi local que bloquean la comunicación directa
-// entre el celular y la IP local de la PC. Localtunnel puentea este bloqueo.
-// 1. URL base desde variables de entorno con fallback a tu IP local
-export const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.37:3000';
-=======
 // 1. URL base desde variables de entorno con fallback a tu IP local
 export const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://c8f7fdn3-3000.brs.devtunnels.ms';
->>>>>>> 77ed4ba (Actualización MiRecorrido)
 
 // 2. Instancia centralizada de Axios
 export const api = axios.create({

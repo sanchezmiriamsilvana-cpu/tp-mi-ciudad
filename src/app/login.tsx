@@ -32,6 +32,7 @@ import {
   Usuario,
 } from '../servicios/autenticacion';
 
+// 📌 Esquema de validación con Zod
 const loginSchema = z.object({
   email: z.string().email('Ingresá un correo electrónico válido'),
   password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
@@ -41,7 +42,7 @@ type LoginFormData = z.infer<typeof loginSchema>;
 
 export default function LoginPantalla() {
   const temaContext = useTema();
-  // Alias de colores seguros para evitar advertencias de TypeScript
+  // Alias de colores seguros para tema claro/oscuro
   const c = (temaContext as any)?.colores || {};
   const esOscuro = (temaContext as any)?.esOscuro || false;
 
@@ -69,6 +70,7 @@ export default function LoginPantalla() {
     verificarSesion();
   }, []);
 
+  // 🔍 Verificar si ya existe una sesión guardada en el dispositivo
   const verificarSesion = async () => {
     try {
       const token = await obtenerToken();
@@ -87,25 +89,27 @@ export default function LoginPantalla() {
     }
   };
 
-  // 🔑 Enviar credenciales a la API real y guardar preferencia biométrica
+  // 🔑 Enviar credenciales a la API real y sugerir activación biométrica
   const onSubmit = async (data: LoginFormData) => {
     setEnviando(true);
     try {
       const emailLimpio = data.email.trim().toLowerCase();
       const resultado = await iniciarSesion(emailLimpio, data.password);
 
-      if (resultado.exito && resultado.datos) {
+      if (resultado.exito) {
+        const usuarioObtenido = resultado.datos?.usuario || (resultado as any).usuario;
+        
         setHaySesion(true);
-        setUsuario(resultado.datos.usuario);
+        if (usuarioObtenido) {
+          setUsuario(usuarioObtenido);
+          await guardarUsuario(usuarioObtenido);
+          await SecureStore.setItemAsync(
+            'usuario_guardado',
+            JSON.stringify(usuarioObtenido)
+          );
+        }
 
-        // 🟢 1. Guardamos los datos del usuario en la clave permanente del teléfono
-        await guardarUsuario(resultado.datos.usuario);
-        await SecureStore.setItemAsync(
-          'usuario_guardado',
-          JSON.stringify(resultado.datos.usuario)
-        );
-
-        // 🟢 2. Verificamos disponibilidad de biometría en el hardware
+        // Check availability of hardware for biometrics
         const tieneHardware = await LocalAuthentication.hasHardwareAsync();
         const estaInscripto = await LocalAuthentication.isEnrolledAsync();
 
@@ -119,23 +123,23 @@ export default function LoginPantalla() {
                 style: 'cancel',
                 onPress: async () => {
                   await SecureStore.setItemAsync('biometria_activada', 'false');
-                  router.replace('/perfil');
+                  router.replace('/(tabs)');
                 },
               },
               {
                 text: 'Sí, activar',
                 onPress: async () => {
                   await SecureStore.setItemAsync('biometria_activada', 'true');
-                  router.replace('/perfil');
+                  router.replace('/(tabs)');
                 },
               },
             ]
           );
         } else {
-          router.replace('/perfil');
+          router.replace('/(tabs)');
         }
       } else {
-        Alert.alert('Error', resultado.mensaje || 'Credenciales incorrectas');
+        Alert.alert('Error de ingreso', resultado.mensaje || 'Credenciales incorrectas');
       }
     } catch (error) {
       Alert.alert('Error de conexión', 'No se pudo conectar con el servidor.');
@@ -144,14 +148,13 @@ export default function LoginPantalla() {
     }
   };
 
-  // 🔐 Ingresar con Biometría usando el usuario recordado
+  // 🔐 Ingresar con Biometría usando las credenciales/token guardados
   const handleProbarBiometria = async () => {
     try {
       const activada = await SecureStore.getItemAsync('biometria_activada');
       const userRaw = await SecureStore.getItemAsync('usuario_guardado');
       const usuarioContexto = await obtenerUsuario();
 
-      // 🟢 recuperamos el usuario guardado en el teléfono aunque el token se haya borrado
       const usuarioValido = usuarioContexto || (userRaw ? JSON.parse(userRaw) : null);
 
       if (activada !== 'true' || !usuarioValido) {
@@ -162,10 +165,8 @@ export default function LoginPantalla() {
         return;
       }
 
-      // Solicitamos la autenticación biométrica al sistema operativo
       const exito = await autenticarConBiometria();
       if (exito) {
-        // Restauramos el token de sesión para navegar autenticado
         let token = await obtenerToken();
         if (!token) {
           await guardarToken(`token_biometrico_${Date.now()}`);
@@ -174,7 +175,7 @@ export default function LoginPantalla() {
         setHaySesion(true);
         setUsuario(usuarioValido);
         Alert.alert('¡Bienvenido/a!', `Ingreso biométrico exitoso. Hola ${usuarioValido.nombre}`);
-        router.replace('/perfil');
+        router.replace('/(tabs)');
       }
     } catch (error) {
       Alert.alert('Error', 'No se pudo autenticar con biometría.');
@@ -185,7 +186,7 @@ export default function LoginPantalla() {
     await borrarToken();
     setHaySesion(false);
     setUsuario(null);
-    Alert.alert('Sesión cerrada', 'Has cerrado sesión correctamente');
+    Alert.alert('Sesión cerrada', 'Has cerrado sesión correctamente.');
   };
 
   if (cargando) {
@@ -196,7 +197,7 @@ export default function LoginPantalla() {
     );
   }
 
-  // Vista cuando la sesión SÍ está activa
+  // 👤 Vista cuando la sesión ya está activa
   if (haySesion) {
     return (
       <View style={[styles.container, { backgroundColor: colorFondo }]}>
@@ -218,9 +219,9 @@ export default function LoginPantalla() {
 
         <Pressable
           style={[styles.botonIngresar, { backgroundColor: colorPrimario }]}
-          onPress={() => router.replace('/perfil')}
+          onPress={() => router.replace('/(tabs)')}
         >
-          <Text style={styles.botonTexto}>Ir a Mi Perfil y Configuración</Text>
+          <Text style={styles.botonTexto}>Ir a la Aplicación</Text>
         </Pressable>
 
         <Pressable style={styles.botonCerrar} onPress={handleCerrarSesion}>
@@ -230,7 +231,7 @@ export default function LoginPantalla() {
     );
   }
 
-  // Formulario de ingreso cuando NO hay sesión
+  // 📝 Formulario de ingreso cuando NO hay sesión
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -268,6 +269,7 @@ export default function LoginPantalla() {
               value={value}
               keyboardType="email-address"
               autoCapitalize="none"
+              autoCorrect={false}
             />
           )}
         />
@@ -292,7 +294,7 @@ export default function LoginPantalla() {
                   color: colorTextoPrincipal,
                 },
               ]}
-              placeholder="******"
+              placeholder="••••••••"
               placeholderTextColor={colorTextoSecundario}
               secureTextEntry
               onBlur={onBlur}

@@ -1,9 +1,7 @@
-    import { View, Text } from 'react-native';
+import React from 'react';
 
-    export default function PantallaEventos() {
-      return (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <Text>Próximos Eventos en Colón</Text>
-        </View>
-      );
-    }
+import AgendaEventosScreen from '../../features/audioguias-agenda/screens/AgendaEventosScreen';
+
+export default function PantallaEventos() {
+  return <AgendaEventosScreen modo="tab" />;
+}
