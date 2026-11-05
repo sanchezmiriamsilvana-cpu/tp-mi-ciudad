@@ -4,6 +4,7 @@ import {
   Text,
   TextInput,
   Pressable,
+  TouchableOpacity,
   StyleSheet,
   Alert,
   ActivityIndicator,
@@ -14,13 +15,16 @@ import {
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { router } from 'expo-router';
+import { router, Link } from 'expo-router';
+import * as LocalAuthentication from 'expo-local-authentication';
+import * as SecureStore from 'expo-secure-store';
 import { useTema } from '../contexto/TemaContext';
 
-// Servicios de autenticación
+// Servicios de autenticación conectados a la API real
 import {
-  guardarToken,
+  iniciarSesion,
   obtenerToken,
+  guardarToken,
   borrarToken,
   autenticarConBiometria,
   guardarUsuario,
@@ -36,9 +40,20 @@ const loginSchema = z.object({
 type LoginFormData = z.infer<typeof loginSchema>;
 
 export default function LoginPantalla() {
-  const { colores, esOscuro } = useTema();
+  const temaContext = useTema();
+  // Alias de colores seguros para evitar advertencias de TypeScript
+  const c = (temaContext as any)?.colores || {};
+  const esOscuro = (temaContext as any)?.esOscuro || false;
+
+  const colorFondo = c.fondo || (esOscuro ? '#121212' : '#FFFFFF');
+  const colorTarjetaFondo = c.tarjetaFondo || c.tarjeta || (esOscuro ? '#1C1C1E' : '#F9FAFB');
+  const colorTarjetaBorde = c.tarjetaBorde || c.borde || (esOscuro ? '#334155' : '#E2E8F0');
+  const colorTextoPrincipal = c.textoPrincipal || c.texto || (esOscuro ? '#FFFFFF' : '#1C1C1E');
+  const colorTextoSecundario = c.textoSecundario || c.subtexto || (esOscuro ? '#94A3B8' : '#64748B');
+  const colorPrimario = c.primario || '#0284c7';
 
   const [cargando, setCargando] = useState<boolean>(true);
+  const [enviando, setEnviando] = useState<boolean>(false);
   const [haySesion, setHaySesion] = useState<boolean>(false);
   const [usuario, setUsuario] = useState<Usuario | null>(null);
 
@@ -50,7 +65,6 @@ export default function LoginPantalla() {
     resolver: zodResolver(loginSchema),
   });
 
-  // Al abrir la pantalla, verificamos si ya hay un token en SecureStore
   useEffect(() => {
     verificarSesion();
   }, []);
@@ -73,50 +87,97 @@ export default function LoginPantalla() {
     }
   };
 
+  // 🔑 Enviar credenciales a la API real y guardar preferencia biométrica
   const onSubmit = async (data: LoginFormData) => {
-    const usuarioGuardado = await obtenerUsuario();
+    setEnviando(true);
+    try {
+      const emailLimpio = data.email.trim().toLowerCase();
+      const resultado = await iniciarSesion(emailLimpio, data.password);
 
-    // Verificamos si coincide el email Y la contraseña
-    const esUsuarioRegistrado =
-      usuarioGuardado &&
-      data.email.toLowerCase() === usuarioGuardado.email.toLowerCase() &&
-      (!usuarioGuardado.password || data.password === usuarioGuardado.password);
+      if (resultado.exito && resultado.datos) {
+        setHaySesion(true);
+        setUsuario(resultado.datos.usuario);
 
-    const esCuentaDemo =
-      data.email === 'turista@colon.gob.ar' && data.password === '123456';
+        // 🟢 1. Guardamos los datos del usuario en la clave permanente del teléfono
+        await guardarUsuario(resultado.datos.usuario);
+        await SecureStore.setItemAsync(
+          'usuario_guardado',
+          JSON.stringify(resultado.datos.usuario)
+        );
 
-    if (esUsuarioRegistrado || esCuentaDemo) {
-      const nombreSesion = esUsuarioRegistrado
-        ? usuarioGuardado.nombre
-        : 'Turista en Colón';
-      const emailSesion = esUsuarioRegistrado
-        ? usuarioGuardado.email
-        : 'turista@colon.gob.ar';
+        // 🟢 2. Verificamos disponibilidad de biometría en el hardware
+        const tieneHardware = await LocalAuthentication.hasHardwareAsync();
+        const estaInscripto = await LocalAuthentication.isEnrolledAsync();
 
-      await guardarToken(`mock_jwt_token_${Date.now()}`);
-      await guardarUsuario({ nombre: nombreSesion, email: emailSesion });
-
-      setHaySesion(true);
-      setUsuario({ nombre: nombreSesion, email: emailSesion });
-
-      Alert.alert('¡Bienvenido/a!', `Sesión iniciada como ${nombreSesion}`);
-      router.replace('/perfil');
-    } else {
-      Alert.alert(
-        'Error',
-        'Credenciales incorrectas. Usá turista@colon.gob.ar / 123456'
-      );
+        if (tieneHardware && estaInscripto) {
+          Alert.alert(
+            '¡Bienvenido/a!',
+            '¿Querés activar el ingreso rápido con biometría (huella/rostro) para las próximas sesiones?',
+            [
+              {
+                text: 'No por ahora',
+                style: 'cancel',
+                onPress: async () => {
+                  await SecureStore.setItemAsync('biometria_activada', 'false');
+                  router.replace('/perfil');
+                },
+              },
+              {
+                text: 'Sí, activar',
+                onPress: async () => {
+                  await SecureStore.setItemAsync('biometria_activada', 'true');
+                  router.replace('/perfil');
+                },
+              },
+            ]
+          );
+        } else {
+          router.replace('/perfil');
+        }
+      } else {
+        Alert.alert('Error', resultado.mensaje || 'Credenciales incorrectas');
+      }
+    } catch (error) {
+      Alert.alert('Error de conexión', 'No se pudo conectar con el servidor.');
+    } finally {
+      setEnviando(false);
     }
   };
 
+  // 🔐 Ingresar con Biometría usando el usuario recordado
   const handleProbarBiometria = async () => {
-    const exito = await autenticarConBiometria();
-    if (exito) {
-      await guardarToken('mock_jwt_token_12345');
-      const datosUsuario = await obtenerUsuario();
-      setHaySesion(true);
-      setUsuario(datosUsuario || { nombre: 'Turista', email: 'turista@colon.gob.ar' });
-      router.replace('/perfil');
+    try {
+      const activada = await SecureStore.getItemAsync('biometria_activada');
+      const userRaw = await SecureStore.getItemAsync('usuario_guardado');
+      const usuarioContexto = await obtenerUsuario();
+
+      // 🟢 recuperamos el usuario guardado en el teléfono aunque el token se haya borrado
+      const usuarioValido = usuarioContexto || (userRaw ? JSON.parse(userRaw) : null);
+
+      if (activada !== 'true' || !usuarioValido) {
+        Alert.alert(
+          'Atención',
+          'Iniciá sesión con correo y contraseña al menos una vez y elegí activar la biometría.'
+        );
+        return;
+      }
+
+      // Solicitamos la autenticación biométrica al sistema operativo
+      const exito = await autenticarConBiometria();
+      if (exito) {
+        // Restauramos el token de sesión para navegar autenticado
+        let token = await obtenerToken();
+        if (!token) {
+          await guardarToken(`token_biometrico_${Date.now()}`);
+        }
+
+        setHaySesion(true);
+        setUsuario(usuarioValido);
+        Alert.alert('¡Bienvenido/a!', `Ingreso biométrico exitoso. Hola ${usuarioValido.nombre}`);
+        router.replace('/perfil');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'No se pudo autenticar con biometría.');
     }
   };
 
@@ -129,34 +190,36 @@ export default function LoginPantalla() {
 
   if (cargando) {
     return (
-      <View style={[styles.centerContainer, { backgroundColor: colores.fondo }]}>
-        <ActivityIndicator size="large" color="#0284c7" />
+      <View style={[styles.centerContainer, { backgroundColor: colorFondo }]}>
+        <ActivityIndicator size="large" color={colorPrimario} />
       </View>
     );
   }
 
-  // 👤 Vista cuando la sesión SÍ está activa
+  // Vista cuando la sesión SÍ está activa
   if (haySesion) {
     return (
-      <View style={[styles.container, { backgroundColor: colores.fondo }]}>
+      <View style={[styles.container, { backgroundColor: colorFondo }]}>
         <View
           style={[
             styles.profileCard,
-            { backgroundColor: colores.tarjetaFondo, borderColor: colores.tarjetaBorde },
+            { backgroundColor: colorTarjetaFondo, borderColor: colorTarjetaBorde },
           ]}
         >
           <Text style={styles.avatar}>👤</Text>
-          <Text style={[styles.titulo, { color: colores.textoPrincipal }]}>
+          <Text style={[styles.titulo, { color: colorTextoPrincipal }]}>
             ¡Hola, {usuario?.nombre || 'Turista'}!
           </Text>
-          <Text style={[styles.emailText, { color: colores.textoSecundario }]}>
-            {usuario?.email || 'turista@colon.gob.ar'}
+          <Text style={[styles.emailText, { color: colorTextoSecundario }]}>
+            {usuario?.email || ''}
           </Text>
           <Text style={styles.statusBadge}>✓ Sesión Activa</Text>
         </View>
 
-        {/* Botón para ir a tu perfil */}
-        <Pressable style={styles.botonIngresar} onPress={() => router.replace('/perfil')}>
+        <Pressable
+          style={[styles.botonIngresar, { backgroundColor: colorPrimario }]}
+          onPress={() => router.replace('/perfil')}
+        >
           <Text style={styles.botonTexto}>Ir a Mi Perfil y Configuración</Text>
         </Pressable>
 
@@ -167,22 +230,22 @@ export default function LoginPantalla() {
     );
   }
 
-  // 🔑 Formulario de ingreso cuando NO hay sesión
+  // Formulario de ingreso cuando NO hay sesión
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={{ flex: 1, backgroundColor: colores.fondo }}
+      style={{ flex: 1, backgroundColor: colorFondo }}
     >
-      <ScrollView contentContainerStyle={[styles.container, { backgroundColor: colores.fondo }]}>
-        <Text style={[styles.titulo, { color: colores.textoPrincipal }]}>
+      <ScrollView contentContainerStyle={[styles.container, { backgroundColor: colorFondo }]}>
+        <Text style={[styles.titulo, { color: colorTextoPrincipal }]}>
           Iniciar Sesión
         </Text>
-        <Text style={[styles.subtitulo, { color: colores.textoSecundario }]}>
+        <Text style={[styles.subtitulo, { color: colorTextoSecundario }]}>
           Ingresá a tu cuenta para guardar tus favoritos de Colón
         </Text>
 
         {/* Campo Email */}
-        <Text style={[styles.label, { color: colores.textoPrincipal }]}>
+        <Text style={[styles.label, { color: colorTextoPrincipal }]}>
           Correo electrónico
         </Text>
         <Controller
@@ -193,13 +256,13 @@ export default function LoginPantalla() {
               style={[
                 styles.input,
                 {
-                  backgroundColor: colores.tarjetaFondo,
-                  borderColor: erroresEmail ? '#ef4444' : colores.tarjetaBorde,
-                  color: colores.textoPrincipal,
+                  backgroundColor: colorTarjetaFondo,
+                  borderColor: errors.email ? '#ef4444' : colorTarjetaBorde,
+                  color: colorTextoPrincipal,
                 },
               ]}
-              placeholder="turista@colon.gob.ar"
-              placeholderTextColor={colores.textoSecundario}
+              placeholder="lucia@mail.com"
+              placeholderTextColor={colorTextoSecundario}
               onBlur={onBlur}
               onChangeText={onChange}
               value={value}
@@ -213,7 +276,7 @@ export default function LoginPantalla() {
         )}
 
         {/* Campo Contraseña */}
-        <Text style={[styles.label, { color: colores.textoPrincipal }]}>
+        <Text style={[styles.label, { color: colorTextoPrincipal }]}>
           Contraseña
         </Text>
         <Controller
@@ -224,17 +287,17 @@ export default function LoginPantalla() {
               style={[
                 styles.input,
                 {
-                  backgroundColor: colores.tarjetaFondo,
-                  borderColor: erroresPass ? '#ef4444' : colores.tarjetaBorde,
-                  color: colores.textoPrincipal,
+                  backgroundColor: colorTarjetaFondo,
+                  borderColor: errors.password ? '#ef4444' : colorTarjetaBorde,
+                  color: colorTextoPrincipal,
                 },
               ]}
-              placeholder="••••••"
-              placeholderTextColor={colores.textoSecundario}
+              placeholder="******"
+              placeholderTextColor={colorTextoSecundario}
+              secureTextEntry
               onBlur={onBlur}
               onChangeText={onChange}
               value={value}
-              secureTextEntry
             />
           )}
         />
@@ -242,69 +305,43 @@ export default function LoginPantalla() {
           <Text style={styles.errorText}>{errors.password.message}</Text>
         )}
 
-        {/* Botón Iniciar Sesión */}
-        <Pressable
-          style={styles.botonIngresar}
+        {/* Botón de Iniciar Sesión */}
+        <TouchableOpacity
+          style={[styles.botonIngresar, { backgroundColor: colorPrimario }]}
           onPress={handleSubmit(onSubmit)}
+          disabled={enviando}
         >
-          <Text style={styles.botonTexto}>Ingresar</Text>
-        </Pressable>
+          {enviando ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.botonTexto}>Iniciar Sesión</Text>
+          )}
+        </TouchableOpacity>
 
         {/* Botón Biometría */}
-        <Pressable
-          style={[
-            styles.botonBiometria,
-            {
-              backgroundColor: colores.tarjetaFondo,
-              borderColor: colores.tarjetaBorde,
-            },
-          ]}
-          onPress={handleProbarBiometria}
-        >
-          <Text
-            style={[
-              styles.botonTextoBiometria,
-              { color: esOscuro ? '#38bdf8' : '#0284c7' },
-            ]}
-          >
-            Ingresar con Huella / Rostro 👆
+        <TouchableOpacity style={styles.botonBiometria} onPress={handleProbarBiometria}>
+          <Text style={[styles.textoBiometria, { color: colorPrimario }]}>
+            🔐 Ingresar con Huella / Rostro
           </Text>
-        </Pressable>
+        </TouchableOpacity>
 
-        {/* 🚀 Enlace a Crear Cuenta / Registro */}
-        <View style={styles.footerRegistro}>
-          <Text style={[styles.textoFooter, { color: colores.textoSecundario }]}>
+        {/* Link a Registro */}
+        <View style={styles.contenedorFooter}>
+          <Text style={{ color: colorTextoSecundario }}>
             ¿No tenés una cuenta?{' '}
           </Text>
-          <Pressable onPress={() => router.push('/registro')}>
-            <Text
-              style={[
-                styles.linkRegistro,
-                { color: esOscuro ? '#38bdf8' : '#0284c7' },
-              ]}
-            >
-              Crear Cuenta
-            </Text>
-          </Pressable>
+          <Link href="/registro" asChild>
+            <TouchableOpacity>
+              <Text style={[styles.link, { color: colorPrimario }]}>
+                Registrate acá
+              </Text>
+            </TouchableOpacity>
+          </Link>
         </View>
-
-        {/* 🚶 Continuar como invitado */}
-        <Pressable
-          style={{ marginTop: 20, alignItems: 'center', paddingVertical: 10 }}
-          onPress={() => router.replace('/(tabs)')}
-        >
-          <Text style={{ color: colores.textoSecundario, fontSize: 14, fontWeight: '500' }}>
-            ← Continuar explorando como invitado
-          </Text>
-        </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
-
-// Variables auxiliares de validación para los estilos dinámicos de los inputs
-const erroresEmail = false;
-const erroresPass = false;
 
 const styles = StyleSheet.create({
   centerContainer: {
@@ -313,54 +350,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   container: {
-    padding: 24,
+    padding: 20,
+    paddingTop: 40,
     flexGrow: 1,
     justifyContent: 'center',
-  },
-  profileCard: {
-    alignItems: 'center',
-    padding: 24,
-    borderRadius: 16,
-    marginBottom: 24,
-    borderWidth: 1,
-  },
-  avatar: {
-    fontSize: 48,
-    marginBottom: 8,
   },
   titulo: {
     fontSize: 26,
     fontWeight: 'bold',
-    marginBottom: 4,
+    marginBottom: 8,
+    textAlign: 'center',
   },
   subtitulo: {
-    fontSize: 14,
-    marginBottom: 20,
-  },
-  emailText: {
-    fontSize: 14,
-    marginBottom: 8,
-  },
-  statusBadge: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#16a34a',
-    backgroundColor: '#dcfce7',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
+    fontSize: 15,
+    marginBottom: 24,
+    textAlign: 'center',
   },
   label: {
     fontSize: 14,
     fontWeight: '600',
     marginBottom: 6,
-    marginTop: 12,
+    marginTop: 10,
   },
   input: {
+    height: 48,
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 10,
     fontSize: 16,
   },
   errorText: {
@@ -369,52 +385,66 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   botonIngresar: {
-    backgroundColor: '#0284c7',
-    paddingVertical: 14,
+    height: 50,
     borderRadius: 8,
+    justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 20,
+    marginTop: 24,
   },
   botonTexto: {
-    color: '#fff',
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: 'bold',
   },
   botonBiometria: {
-    borderWidth: 1,
-    paddingVertical: 14,
-    borderRadius: 8,
+    padding: 14,
     alignItems: 'center',
     marginTop: 12,
   },
-  botonTextoBiometria: {
+  textoBiometria: {
     fontSize: 15,
     fontWeight: '600',
   },
-  botonCerrar: {
-    backgroundColor: '#fef2f2',
+  contenedorFooter: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 24,
+  },
+  link: {
+    fontWeight: 'bold',
+  },
+  profileCard: {
+    padding: 24,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#fecaca',
-    paddingVertical: 14,
-    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  avatar: {
+    fontSize: 48,
+    marginBottom: 10,
+  },
+  emailText: {
+    fontSize: 14,
+    marginBottom: 12,
+  },
+  statusBadge: {
+    backgroundColor: '#dcfce7',
+    color: '#166534',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  botonCerrar: {
+    padding: 14,
     alignItems: 'center',
     marginTop: 12,
   },
   botonTextoCerrar: {
     color: '#ef4444',
-    fontSize: 15,
-    fontWeight: 'bold',
-  },
-  footerRegistro: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginTop: 24,
-  },
-  textoFooter: {
-    fontSize: 14,
-  },
-  linkRegistro: {
-    fontSize: 14,
     fontWeight: 'bold',
   },
 });
