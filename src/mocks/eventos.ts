@@ -1,0 +1,43 @@
+import { Evento } from '../tipos/eventos';
+
+export const MOCK_EVENTOS: Evento[] = [
+  {
+    id: 'evt-01',
+    titulo: 'Fiesta Nacional de la Artesania',
+    descripcion: 'Exposicion y venta de artesanias de todo el pais, espectaculos musicales en vivo y patio gastronomico.',
+    lugarId: null,
+    direccionLibre: 'Parque Quiros, Colon, Entre Rios',
+    coordenadas: { latitud: -32.2215, longitud: -58.1388 },
+    inicio: '2026-10-12T18:00:00Z',
+    fin: '2026-10-15T23:59:00Z',
+    imagenUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500',
+    precio: 2500,
+    estado: 'programado',
+  },
+  {
+    id: 'evt-02',
+    titulo: 'Visita Guiada Nocturna al Molino Forclaz',
+    descripcion: 'Recorrido teatralizado bajo las estrellas descubriendo la historia de la inmigracion en la region.',
+    lugarId: 'lug-01',
+    direccionLibre: null,
+    coordenadas: { latitud: -32.1852, longitud: -58.1925 },
+    inicio: '2026-10-18T20:30:00Z',
+    fin: '2026-10-18T22:00:00Z',
+    imagenUrl: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=500',
+    precio: 1500,
+    estado: 'programado',
+  },
+  {
+    id: 'evt-03',
+    titulo: 'Maraton Acuatica Rio Uruguay',
+    descripcion: 'Competencia de natacion en aguas abiertas uniendo las costas de Colon y San Jose.',
+    lugarId: 'lug-03',
+    direccionLibre: null,
+    coordenadas: { latitud: -32.2281, longitud: -58.1302 },
+    inicio: '2026-10-25T09:00:00Z',
+    fin: '2026-10-25T13:00:00Z',
+    imagenUrl: 'https://images.unsplash.com/photo-1530549387789-4c1017266635?w=500',
+    precio: 0,
+    estado: 'suspendido',
+  },
+];
