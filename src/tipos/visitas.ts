@@ -14,6 +14,7 @@ export interface Visita {
 export interface RegistrarVisitaDTO {
   lugarId: string;
   origen: OrigenVisita;
+  fechaHora?: string;
   fotoUri?: string;
   nota?: string;
 }

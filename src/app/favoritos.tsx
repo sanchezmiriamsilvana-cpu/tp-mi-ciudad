@@ -17,10 +17,11 @@ import { obtenerLugares } from '../servicios/lugares';
 import { obtenerFavoritosIds, alternarFavorito } from '../servicios/favoritos';
 import { useTema } from '../contexto/TemaContext';
 import { BASE_URL } from '../servicios/api';
+import { obtenerUsuario } from '../servicios/autenticacion';
 
 const IMAGEN_DEFAULT = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSYwl49SBaAWa5x5iCzdte_NsHghIRZiSWyphHOVNp6aw&s';
 
-// 🟢 Helper seguro: procesa cualquier formato de imagen y reemplaza URLs locales por la BASE_URL activa
+//  Procesamiento de imágenes 
 const obtenerImagenSegura = (imagenes: any): string => {
   if (!imagenes) return IMAGEN_DEFAULT;
 
@@ -85,7 +86,11 @@ export default function FavoritosPantalla() {
       async function cargarFavoritos() {
         setCargando(true);
         try {
-          const favIds = await obtenerFavoritosIds();
+          // 🟢 Lectura del usuario activo
+          const usuario = await obtenerUsuario();
+          const usuarioId = usuario?.email || usuario?.id || usuario?.nombre || 'usuario_invitado';
+
+          const favIds = await obtenerFavoritosIds(usuarioId);
 
           if (!favIds || favIds.length === 0) {
             setLugaresFavoritos([]);
@@ -109,7 +114,11 @@ export default function FavoritosPantalla() {
 
   const handleQuitarFavorito = async (lugarId: string) => {
     try {
-      await alternarFavorito(lugarId);
+      // 🟢 Eliminación de favorito vinculada a la cuenta activa
+      const usuario = await obtenerUsuario();
+      const usuarioId = usuario?.email || usuario?.id || usuario?.nombre || 'usuario_invitado';
+
+      await alternarFavorito(lugarId, usuarioId);
       // Elimina la tarjeta inmediatamente del estado local
       setLugaresFavoritos((prev) => prev.filter((item) => item.id !== lugarId));
     } catch (error) {

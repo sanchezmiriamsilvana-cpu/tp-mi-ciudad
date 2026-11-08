@@ -1,34 +1,48 @@
 import * as SQLite from 'expo-sqlite';
-import { api } from './api';
+import { api } from './api'; 
 import { Visita, RegistrarVisitaDTO } from '../tipos/visitas';
 
 const NOMBRE_DB = 'miciudad.db';
+let dbInstance: SQLite.SQLiteDatabase | null = null;
 
-// Inicialización de la base de datos SQLite local
-async function obtenerDB() {
-  const db = await SQLite.openDatabaseAsync(NOMBRE_DB);
-  await db.execAsync(`
-    CREATE TABLE IF NOT EXISTS visitas (
-      id TEXT PRIMARY KEY NOT NULL,
-      usuarioId TEXT,
-      lugarId TEXT NOT NULL,
-      fechaHora TEXT NOT NULL,
-      origen TEXT NOT NULL,
-      fotoUri TEXT,
-      nota TEXT,
-      sincronizada INTEGER NOT NULL DEFAULT 0
-    );
-  `);
-  return db;
+// Reutilización de la conexión a la base de datos local SQLite
+async function obtenerDB(): Promise<SQLite.SQLiteDatabase> {
+  if (!dbInstance) {
+    dbInstance = await SQLite.openDatabaseAsync(NOMBRE_DB);
+    await dbInstance.execAsync(`
+      CREATE TABLE IF NOT EXISTS visitas (
+        id TEXT PRIMARY KEY NOT NULL,
+        usuarioId TEXT,
+        lugarId TEXT NOT NULL,
+        fechaHora TEXT NOT NULL,
+        origen TEXT NOT NULL,
+        fotoUri TEXT,
+        nota TEXT,
+        sincronizada INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+  }
+  return dbInstance;
 }
 
 /**
- * 1. Obtener todas las visitas almacenadas localmente en el teléfono (SQLite)
+ * 1. Obtener las visitas almacenadas en SQLite filtradas por el usuario activo
  */
-export async function obtenerVisitasLocales(): Promise<Visita[]> {
+export async function obtenerVisitasLocales(usuarioId?: string): Promise<Visita[]> {
   try {
     const db = await obtenerDB();
-    const filas = await db.getAllAsync<any>('SELECT * FROM visitas ORDER BY fechaHora DESC;');
+    let filas: any[] = [];
+
+    if (usuarioId && usuarioId.trim() !== '') {
+      filas = await db.getAllAsync<any>(
+        'SELECT * FROM visitas WHERE usuarioId = ? ORDER BY fechaHora DESC;',
+        [usuarioId]
+      );
+    } else {
+      filas = await db.getAllAsync<any>(
+        'SELECT * FROM visitas WHERE usuarioId IS NULL OR usuarioId = "" OR usuarioId = "usuario_invitado" ORDER BY fechaHora DESC;'
+      );
+    }
     
     return filas.map((row) => ({
       id: row.id,
@@ -81,8 +95,8 @@ export async function actualizarVisitaLocal(
   try {
     const db = await obtenerDB();
     await db.runAsync(
-      `UPDATE visitas SET nota = COALESCE(?, nota), fotoUri = COALESCE(?, fotoUri) WHERE id = ?;`,
-      [datos.nota || null, datos.fotoUri || null, id]
+      `UPDATE visitas SET nota = ?, fotoUri = ? WHERE id = ?;`,
+      [datos.nota ?? null, datos.fotoUri ?? null, id]
     );
   } catch (error) {
     console.error('Error al actualizar visita local:', error);
@@ -90,14 +104,18 @@ export async function actualizarVisitaLocal(
 }
 
 /**
- * 4. Registrar la visita en el backend/API
+ * 4. Registrar la visita en el backend/API NestJS (POST /yo/visitas)
  */
 export async function registrarVisitaAPI(datos: RegistrarVisitaDTO): Promise<boolean> {
   try {
     const respuesta = await api.post('/yo/visitas', datos);
     return respuesta.status === 200 || respuesta.status === 201;
-  } catch (error) {
-    console.warn('API no disponible. La visita quedó guardada únicamente de forma local.');
+  } catch (error: any) {
+    console.warn(
+      '⚠️ Error API Visita:',
+      error.response?.status,
+      error.response?.data || error.message
+    );
     return false;
   }
 }
@@ -112,8 +130,8 @@ export async function actualizarVisitaAPI(
   try {
     const respuesta = await api.patch(`/yo/visitas/${id}`, datos);
     return respuesta.status === 200;
-  } catch (error) {
-    console.warn('No se pudo sincronizar la nota/foto con el servidor.');
+  } catch (error: any) {
+    console.warn('⚠️ No se pudo sincronizar nota/foto en API:', error.response?.status || error.message);
     return false;
   }
 }
@@ -132,6 +150,7 @@ export async function sincronizarVisitasPendientes(): Promise<void> {
       const datosDTO: RegistrarVisitaDTO = {
         lugarId: item.lugarId,
         origen: item.origen,
+        fechaHora: item.fechaHora, 
         fotoUri: item.fotoUri || undefined,
         nota: item.nota || undefined,
       };

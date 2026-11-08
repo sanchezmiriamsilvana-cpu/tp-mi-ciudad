@@ -32,7 +32,6 @@ import {
   Usuario,
 } from '../servicios/autenticacion';
 
-// 📌 Esquema de validación con Zod
 const loginSchema = z.object({
   email: z.string().email('Ingresá un correo electrónico válido'),
   password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
@@ -42,7 +41,6 @@ type LoginFormData = z.infer<typeof loginSchema>;
 
 export default function LoginPantalla() {
   const temaContext = useTema();
-  // Alias de colores seguros para tema claro/oscuro
   const c = (temaContext as any)?.colores || {};
   const esOscuro = (temaContext as any)?.esOscuro || false;
 
@@ -70,15 +68,19 @@ export default function LoginPantalla() {
     verificarSesion();
   }, []);
 
-  // 🔍 Verificar si ya existe una sesión guardada en el dispositivo
   const verificarSesion = async () => {
     try {
       const token = await obtenerToken();
-      const datosUsuario = await obtenerUsuario();
+      let datosUsuario = await obtenerUsuario();
 
-      if (token) {
+      if (!datosUsuario) {
+        const userRaw = await SecureStore.getItemAsync('usuario_guardado');
+        if (userRaw) datosUsuario = JSON.parse(userRaw);
+      }
+
+      if (token && datosUsuario) {
         setHaySesion(true);
-        setUsuario(datosUsuario || { nombre: 'Turista', email: 'turista@colon.gob.ar' });
+        setUsuario(datosUsuario);
       } else {
         setHaySesion(false);
       }
@@ -89,27 +91,32 @@ export default function LoginPantalla() {
     }
   };
 
-  // 🔑 Enviar credenciales a la API real y sugerir activación biométrica
+  // 🔑 1. Enviar credenciales a la API real y guardar el token para biometría futura
   const onSubmit = async (data: LoginFormData) => {
     setEnviando(true);
     try {
       const emailLimpio = data.email.trim().toLowerCase();
       const resultado = await iniciarSesion(emailLimpio, data.password);
 
-      if (resultado.exito) {
-        const usuarioObtenido = resultado.datos?.usuario || (resultado as any).usuario;
-        
+      if (resultado.exito && resultado.datos) {
         setHaySesion(true);
-        if (usuarioObtenido) {
-          setUsuario(usuarioObtenido);
-          await guardarUsuario(usuarioObtenido);
-          await SecureStore.setItemAsync(
-            'usuario_guardado',
-            JSON.stringify(usuarioObtenido)
-          );
+        setUsuario(resultado.datos.usuario);
+
+        // 🟢 Guardamos el usuario activo
+        await guardarUsuario(resultado.datos.usuario);
+        await SecureStore.setItemAsync(
+          'usuario_guardado',
+          JSON.stringify(resultado.datos.usuario)
+        );
+
+        // 🟢 Resguardamos el token real de la API para habilitar la biometría posterior
+        const tokenObtenido = await obtenerToken();
+        const tokenReal = resultado.datos.token || tokenObtenido;
+        if (tokenReal) {
+          await SecureStore.setItemAsync('token_guardado', tokenReal);
         }
 
-        // Check availability of hardware for biometrics
+        // 🟢 Verificamos disponibilidad de biometría en el dispositivo
         const tieneHardware = await LocalAuthentication.hasHardwareAsync();
         const estaInscripto = await LocalAuthentication.isEnrolledAsync();
 
@@ -123,23 +130,23 @@ export default function LoginPantalla() {
                 style: 'cancel',
                 onPress: async () => {
                   await SecureStore.setItemAsync('biometria_activada', 'false');
-                  router.replace('/(tabs)');
+                  router.replace('/perfil');
                 },
               },
               {
                 text: 'Sí, activar',
                 onPress: async () => {
                   await SecureStore.setItemAsync('biometria_activada', 'true');
-                  router.replace('/(tabs)');
+                  router.replace('/perfil');
                 },
               },
             ]
           );
         } else {
-          router.replace('/(tabs)');
+          router.replace('/perfil');
         }
       } else {
-        Alert.alert('Error de ingreso', resultado.mensaje || 'Credenciales incorrectas');
+        Alert.alert('Error', resultado.mensaje || 'Credenciales incorrectas');
       }
     } catch (error) {
       Alert.alert('Error de conexión', 'No se pudo conectar con el servidor.');
@@ -148,16 +155,15 @@ export default function LoginPantalla() {
     }
   };
 
-  // 🔐 Ingresar con Biometría usando las credenciales/token guardados
+  // 🔐 2. Ingresar con Biometría usando el token REAL y usuario guardados
   const handleProbarBiometria = async () => {
     try {
       const activada = await SecureStore.getItemAsync('biometria_activada');
       const userRaw = await SecureStore.getItemAsync('usuario_guardado');
-      const usuarioContexto = await obtenerUsuario();
+      const tokenGuardado = await SecureStore.getItemAsync('token_guardado');
 
-      const usuarioValido = usuarioContexto || (userRaw ? JSON.parse(userRaw) : null);
-
-      if (activada !== 'true' || !usuarioValido) {
+      // Validamos que la biometría esté activada y existan el token real y el usuario guardados
+      if (activada !== 'true' || !userRaw || !tokenGuardado) {
         Alert.alert(
           'Atención',
           'Iniciá sesión con correo y contraseña al menos una vez y elegí activar la biometría.'
@@ -165,17 +171,19 @@ export default function LoginPantalla() {
         return;
       }
 
+      const usuarioValido = JSON.parse(userRaw);
+
+      // Solicitamos la autenticación biométrica al sistema operativo del celular
       const exito = await autenticarConBiometria();
       if (exito) {
-        let token = await obtenerToken();
-        if (!token) {
-          await guardarToken(`token_biometrico_${Date.now()}`);
-        }
+        // 🟢 Restauramos el token REAL devuelto por el servidor en la sesión activa
+        await guardarToken(tokenGuardado);
+        await guardarUsuario(usuarioValido);
 
         setHaySesion(true);
         setUsuario(usuarioValido);
         Alert.alert('¡Bienvenido/a!', `Ingreso biométrico exitoso. Hola ${usuarioValido.nombre}`);
-        router.replace('/(tabs)');
+        router.replace('/perfil');
       }
     } catch (error) {
       Alert.alert('Error', 'No se pudo autenticar con biometría.');
@@ -186,7 +194,7 @@ export default function LoginPantalla() {
     await borrarToken();
     setHaySesion(false);
     setUsuario(null);
-    Alert.alert('Sesión cerrada', 'Has cerrado sesión correctamente.');
+    Alert.alert('Sesión cerrada', 'Has cerrado sesión correctamente');
   };
 
   if (cargando) {
@@ -197,7 +205,7 @@ export default function LoginPantalla() {
     );
   }
 
-  // 👤 Vista cuando la sesión ya está activa
+  // Vista cuando la sesión SÍ está activa
   if (haySesion) {
     return (
       <View style={[styles.container, { backgroundColor: colorFondo }]}>
@@ -219,9 +227,9 @@ export default function LoginPantalla() {
 
         <Pressable
           style={[styles.botonIngresar, { backgroundColor: colorPrimario }]}
-          onPress={() => router.replace('/(tabs)')}
+          onPress={() => router.replace('/perfil')}
         >
-          <Text style={styles.botonTexto}>Ir a la Aplicación</Text>
+          <Text style={styles.botonTexto}>Ir a Mi Perfil y Configuración</Text>
         </Pressable>
 
         <Pressable style={styles.botonCerrar} onPress={handleCerrarSesion}>
@@ -231,7 +239,7 @@ export default function LoginPantalla() {
     );
   }
 
-  // 📝 Formulario de ingreso cuando NO hay sesión
+  // Formulario de ingreso cuando NO hay sesión
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -262,14 +270,13 @@ export default function LoginPantalla() {
                   color: colorTextoPrincipal,
                 },
               ]}
-              placeholder="lucia@mail.com"
+              placeholder="nombre@mail.com"
               placeholderTextColor={colorTextoSecundario}
               onBlur={onBlur}
               onChangeText={onChange}
               value={value}
               keyboardType="email-address"
               autoCapitalize="none"
-              autoCorrect={false}
             />
           )}
         />
@@ -294,7 +301,7 @@ export default function LoginPantalla() {
                   color: colorTextoPrincipal,
                 },
               ]}
-              placeholder="••••••••"
+              placeholder="******"
               placeholderTextColor={colorTextoSecundario}
               secureTextEntry
               onBlur={onBlur}

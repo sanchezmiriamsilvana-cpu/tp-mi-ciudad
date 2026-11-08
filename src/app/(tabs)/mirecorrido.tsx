@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,8 +11,9 @@ import {
   Modal,
   Image,
 } from 'react-native';
-import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
+import { useFocusEffect } from 'expo-router';
 import EscanerQRModal from '../componentes/EscanerQRModal';
 import {
   obtenerVisitasLocales,
@@ -22,6 +23,7 @@ import {
   actualizarVisitaAPI,
   actualizarVisitaLocal,
 } from '../../servicios/visitas';
+import { obtenerUsuario } from '../../servicios/autenticacion';
 import { tomarFotoVisita } from '../../servicios/camara';
 import { Visita } from '../../tipos/visitas';
 import { useTema } from '../../contexto/TemaContext';
@@ -38,45 +40,116 @@ export default function RecorridoPantalla() {
   const [notaTexto, setNotaTexto] = useState<string>('');
   const [fotoUriLocal, setFotoUriLocal] = useState<string | null>(null);
 
-  // 1. Cargar las visitas locales al entrar
+  // Función para formatear fechas con zona horaria (-03:00)
+  function obtenerFechaISOConZona(fecha: Date = new Date()): string {
+    const tzo = -fecha.getTimezoneOffset();
+    const dif = tzo >= 0 ? '+' : '-';
+    const pad = (num: number) => String(Math.floor(Math.abs(num))).padStart(2, '0');
+
+    return (
+      fecha.getFullYear() +
+      '-' +
+      pad(fecha.getMonth() + 1) +
+      '-' +
+      pad(fecha.getDate()) +
+      'T' +
+      pad(fecha.getHours()) +
+      ':' +
+      pad(fecha.getMinutes()) +
+      ':' +
+      pad(fecha.getSeconds()) +
+      dif +
+      pad(tzo / 60) +
+      ':' +
+      pad(tzo % 60)
+    );
+  }
+
+  // 1. Cargar las visitas pertenecientes únicamente al usuario activo
   const cargarVisitas = useCallback(async () => {
     setCargando(true);
-    // Intentamos sincronizar con la API si hay red
+    const usr = await obtenerUsuario();
+
+    //  Si no hay usuario o token de sesión activo, se limpia la lista
+    if (!usr || !usr.email) {
+      setVisitas([]);
+      setCargando(false);
+      return;
+    }
+
+    // Intentamos sincronizar pendientes si hay red
     await sincronizarVisitasPendientes();
-    // Obtenemos la lista guardada en la BD SQLite local
-    const lista = await obtenerVisitasLocales();
+
+    // Obtenemos la lista guardada en SQLite filtrando por el correo del usuario
+    const lista = await obtenerVisitasLocales(usr.email);
     setVisitas(lista);
     setCargando(false);
   }, []);
 
-  useEffect(() => {
-    cargarVisitas();
-  }, [cargarVisitas]);
+  // 🔄 useFocusEffect asegura que la pantalla recargue datos cada vez que se enfoca la pestaña
+  useFocusEffect(
+    useCallback(() => {
+      cargarVisitas();
+    }, [cargarVisitas])
+  );
 
   // 2. Procesar el código QR escaneado ('COLON:<id_lugar>')
   const handleCodigoEscaneado = async (codigo: string) => {
     setModalQRVisible(false);
 
-    const lugarId = codigo.replace('COLON:', '');
-    const nuevaVisita: Visita = {
-      id: `vis-${Date.now()}`,
-      lugarId: lugarId,
-      fechaHora: new Date().toISOString(),
-      origen: 'qr',
-      sincronizada: false,
-    };
+    // Vibración táctil de éxito al detectar el QR escaneado
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-    // Guardar siempre localmente primero (garantiza funcionamiento Offline)
-    await guardarVisitaLocal(nuevaVisita);
+    // Verificación de sesión previa
+    const usr = await obtenerUsuario();
+    if (!usr || !usr.email) {
+      Alert.alert('Sesión requerida', 'Debés iniciar sesión para registrar tu visita.');
+      return;
+    }
 
-    // Intentar registrar en el backend NestJS
+    // Limpieza de comillas, llaves y espacios
+    const codigoLimpio = codigo.replace(/[{}"']/g, '').trim();
+
+    // Validar que el código empiece con el prefijo oficial COLON:
+    if (!codigoLimpio.toUpperCase().startsWith('COLON:')) {
+      Alert.alert(
+        'QR no válido',
+        'El código escaneado no corresponde a un cartel oficial de Mi Ciudad.'
+      );
+      return;
+    }
+
+    // Extraer el ID del lugar de forma limpia
+    const lugarId = codigoLimpio.substring(6).trim();
+
+    if (!lugarId) {
+      Alert.alert('Error', 'No se pudo identificar el código del lugar.');
+      return;
+    }
+
+    const fechaConZona = obtenerFechaISOConZona();
+
+    // Intentar registrar en la API backend
     const respuestaAPI = await registrarVisitaAPI({
-      lugarId: nuevaVisita.lugarId,
+      lugarId: lugarId,
       origen: 'qr',
+      fechaHora: fechaConZona,
     });
 
+    const nuevaVisita: Visita = {
+      id: `vis-${Date.now()}`,
+      usuarioId: usr.email,
+      lugarId: lugarId,
+      fechaHora: fechaConZona,
+      origen: 'qr',
+      sincronizada: respuestaAPI,
+    };
+
+    // Guardar localmente en la BD SQLite del teléfono
+    await guardarVisitaLocal(nuevaVisita);
+
     if (respuestaAPI) {
-      Alert.alert('¡Visita registrada!', 'Tu presencia fue registrada con éxito.');
+      Alert.alert('¡Visita registrada!', 'Tu presencia fue registrada con éxito en el servidor.');
     } else {
       Alert.alert(
         'Guardado en el teléfono',
@@ -99,19 +172,19 @@ export default function RecorridoPantalla() {
   const handleGuardarNotaYFoto = async () => {
     if (!visitaSeleccionada) return;
 
-    // Guardar primero en el teléfono (SQLite)
+    // Guardar en SQLite (usando null para evitar crash por undefined en Android)
     await actualizarVisitaLocal(visitaSeleccionada.id, {
-      nota: notaTexto,
-      fotoUri: fotoUriLocal,
+      nota: notaTexto.trim(),
+      fotoUri: fotoUriLocal ?? null,
     });
 
-    // Intentar enviar al servidor NestJS si hay señal
+    // Intentar enviar al servidor NestJS si hay conexión
     await actualizarVisitaAPI(visitaSeleccionada.id, {
-      nota: notaTexto,
+      nota: notaTexto.trim(),
       fotoUri: fotoUriLocal ?? undefined,
     });
 
-    // Resetear estados del modal y recargar lista
+    // Resetear modal y recargar lista
     setVisitaSeleccionada(null);
     setNotaTexto('');
     setFotoUriLocal(null);
@@ -202,113 +275,111 @@ export default function RecorridoPantalla() {
   };
 
   return (
-    <SafeAreaProvider>
-      <SafeAreaView style={[styles.container, { backgroundColor: colores.fondo }]}>
-        {/* Botón Principal: Escanear QR del Cartel */}
-        <View
-          style={[
-            styles.seccionEscanear,
-            { backgroundColor: colores.tarjetaFondo, borderBottomColor: colores.tarjetaBorde },
-          ]}
+    <View style={[styles.container, { backgroundColor: colores.fondo }]}>
+      {/* Botón Principal: Escanear QR del Cartel */}
+      <View
+        style={[
+          styles.seccionEscanear,
+          { backgroundColor: colores.tarjetaFondo, borderBottomColor: colores.tarjetaBorde },
+        ]}
+      >
+        <TouchableOpacity
+          style={styles.botonQR}
+          onPress={() => setModalQRVisible(true)}
         >
-          <TouchableOpacity
-            style={styles.botonQR}
-            onPress={() => setModalQRVisible(true)}
-          >
-            <Ionicons name="qr-code" size={24} color="#FFF" />
-            <Text style={styles.textoBotonQR}>Escanear QR de Atractivo</Text>
-          </TouchableOpacity>
+          <Ionicons name="qr-code" size={24} color="#FFF" />
+          <Text style={styles.textoBotonQR}>Escanear QR de Atractivo</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Lista de Visitas / Recorrido */}
+      {cargando ? (
+        <ActivityIndicator size="large" color="#0284c7" style={styles.loader} />
+      ) : visitas.length === 0 ? (
+        <View style={styles.vacioContainer}>
+          <Ionicons name="map-outline" size={64} color={colores.textoSecundario} />
+          <Text style={[styles.vacioTitulo, { color: colores.textoPrincipal }]}>
+            Aún no registraste visitas
+          </Text>
+          <Text style={[styles.vacioSub, { color: colores.textoSecundario }]}>
+            Escaneá el código QR en los carteles de los atractivos para registrar tu paso por Colón.
+          </Text>
         </View>
-
-        {/* Lista de Visitas / Recorrido */}
-        {cargando ? (
-          <ActivityIndicator size="large" color="#0284c7" style={styles.loader} />
-        ) : visitas.length === 0 ? (
-          <View style={styles.vacioContainer}>
-            <Ionicons name="map-outline" size={64} color={colores.textoSecundario} />
-            <Text style={[styles.vacioTitulo, { color: colores.textoPrincipal }]}>
-              Aún no registraste visitas
-            </Text>
-            <Text style={[styles.vacioSub, { color: colores.textoSecundario }]}>
-              Escaneá el código QR en los carteles de los atractivos para registrar tu paso por Colón.
-            </Text>
-          </View>
-        ) : (
-          <FlatList
-            data={visitas}
-            keyExtractor={(item) => item.id}
-            renderItem={renderItemVisita}
-            contentContainerStyle={styles.listaPadding}
-            onRefresh={cargarVisitas}
-            refreshing={cargando}
-          />
-        )}
-
-        {/* Modal para Escaneo QR */}
-        <EscanerQRModal
-          visible={modalQRVisible}
-          onCerrar={() => setModalQRVisible(false)}
-          onCodigoEscaneado={handleCodigoEscaneado}
+      ) : (
+        <FlatList
+          data={visitas}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItemVisita}
+          contentContainerStyle={styles.listaPadding}
+          onRefresh={cargarVisitas}
+          refreshing={cargando}
         />
+      )}
 
-        {/* Modal para Agregar/Editar Nota y Foto */}
-        <Modal visible={!!visitaSeleccionada} transparent animationType="fade">
-          <View style={styles.modalOverlay}>
-            <View
-              style={[
-                styles.modalContenido,
-                { backgroundColor: colores.tarjetaFondo, borderColor: colores.tarjetaBorde },
-              ]}
-            >
-              <Text style={[styles.modalTitulo, { color: colores.textoPrincipal }]}>
-                Recuerdo de la Visita
+      {/* Modal para Escaneo QR */}
+      <EscanerQRModal
+        visible={modalQRVisible}
+        onCerrar={() => setModalQRVisible(false)}
+        onCodigoEscaneado={handleCodigoEscaneado}
+      />
+
+      {/* Modal para Agregar/Editar Nota y Foto */}
+      <Modal visible={!!visitaSeleccionada} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View
+            style={[
+              styles.modalContenido,
+              { backgroundColor: colores.tarjetaFondo, borderColor: colores.tarjetaBorde },
+            ]}
+          >
+            <Text style={[styles.modalTitulo, { color: colores.textoPrincipal }]}>
+              Recuerdo de la Visita
+            </Text>
+
+            {/* Previsualización de la Foto */}
+            {fotoUriLocal ? (
+              <Image source={{ uri: fotoUriLocal }} style={styles.previewFotoModal} resizeMode="cover" />
+            ) : null}
+
+            {/* Botón Tomar Foto */}
+            <TouchableOpacity style={styles.btnCamara} onPress={handleTomarFoto}>
+              <Ionicons name="camera" size={20} color="#FFF" />
+              <Text style={styles.btnCamaraTexto}>
+                {fotoUriLocal ? 'Cambiar Foto' : 'Tomar Foto del Lugar'}
               </Text>
+            </TouchableOpacity>
 
-              {/* Previsualización de la Foto */}
-              {fotoUriLocal ? (
-                <Image source={{ uri: fotoUriLocal }} style={styles.previewFotoModal} resizeMode="cover" />
-              ) : null}
+            <TextInput
+              style={[
+                styles.inputNota,
+                { backgroundColor: colores.fondo, color: colores.textoPrincipal },
+              ]}
+              placeholder="¿Qué te pareció el lugar? (Escribí una nota corta)"
+              placeholderTextColor={colores.textoSecundario}
+              multiline
+              numberOfLines={3}
+              value={notaTexto}
+              onChangeText={setNotaTexto}
+            />
 
-              {/* Botón Tomar Foto */}
-              <TouchableOpacity style={styles.btnCamara} onPress={handleTomarFoto}>
-                <Ionicons name="camera" size={20} color="#FFF" />
-                <Text style={styles.btnCamaraTexto}>
-                  {fotoUriLocal ? 'Cambiar Foto' : 'Tomar Foto del Lugar'}
-                </Text>
+            <View style={styles.modalAcciones}>
+              <TouchableOpacity
+                style={styles.btnCancelar}
+                onPress={() => {
+                  setVisitaSeleccionada(null);
+                  setFotoUriLocal(null);
+                }}
+              >
+                <Text style={styles.btnTextoCancelar}>Cancelar</Text>
               </TouchableOpacity>
-
-              <TextInput
-                style={[
-                  styles.inputNota,
-                  { backgroundColor: colores.fondo, color: colores.textoPrincipal },
-                ]}
-                placeholder="¿Qué te pareció el lugar? (Escribí una nota corta)"
-                placeholderTextColor={colores.textoSecundario}
-                multiline
-                numberOfLines={3}
-                value={notaTexto}
-                onChangeText={setNotaTexto}
-              />
-
-              <View style={styles.modalAcciones}>
-                <TouchableOpacity
-                  style={styles.btnCancelar}
-                  onPress={() => {
-                    setVisitaSeleccionada(null);
-                    setFotoUriLocal(null);
-                  }}
-                >
-                  <Text style={styles.btnTextoCancelar}>Cancelar</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.btnGuardar} onPress={handleGuardarNotaYFoto}>
-                  <Text style={styles.btnTextoGuardar}>Guardar</Text>
-                </TouchableOpacity>
-              </View>
+              <TouchableOpacity style={styles.btnGuardar} onPress={handleGuardarNotaYFoto}>
+                <Text style={styles.btnTextoGuardar}>Guardar</Text>
+              </TouchableOpacity>
             </View>
           </View>
-        </Modal>
-      </SafeAreaView>
-    </SafeAreaProvider>
+        </View>
+      </Modal>
+    </View>
   );
 }
 

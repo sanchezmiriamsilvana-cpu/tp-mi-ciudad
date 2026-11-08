@@ -16,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Lugar, Categoria } from '../../tipos/lugares';
 import { obtenerLugares, obtenerCategorias } from '../../servicios/lugares';
-import { obtenerToken } from '../../servicios/autenticacion';
+import { obtenerToken, obtenerUsuario } from '../../servicios/autenticacion';
 import {
   inicializarBaseDatosFavoritos,
   obtenerFavoritosIds,
@@ -32,16 +32,16 @@ import {
 } from '../../servicios/ubicacion';
 
 import { useTema } from '../../contexto/TemaContext';
+import * as Haptics from 'expo-haptics';
 import { BASE_URL } from '../../servicios/api';
 
 const IMAGEN_DEFAULT = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSYwl49SBaAWa5x5iCzdte_NsHghIRZiSWyphHOVNp6aw&s';
 
-// 🟢 Helper seguro para obtener la URL de imagen y reemplazar localhost por BASE_URL
 const obtenerImagenSegura = (imagenes: any): string => {
   if (!imagenes) return IMAGEN_DEFAULT;
 
   // Extraemos la primera posición si viene como arreglo
-  let url = Array.isArray(imagenes) && imagenes.length > 0 ? imagenes[0] : imagenes;
+  let url = Array.isArray(imagenes) && imagenes.length > 0 ? imagenes [0]: imagenes;
 
   if (typeof url === 'object' && url !== null) {
     url = url.url || url.uri || '';
@@ -60,7 +60,7 @@ const obtenerImagenSegura = (imagenes: any): string => {
   return url;
 };
 
-// 🟢 Helper que verifica si el lugar cuenta con audioguía disponible
+// Helper que verifica si el lugar cuenta con audioguía disponible
 const tieneAudioguia = (lugar: any): boolean => {
   if (!lugar) return false;
   const audio = lugar.audioUrl || lugar.audio || lugar.audioguia || lugar.audiolibro;
@@ -105,10 +105,14 @@ export default function PantallaPrincipal() {
     }, [busquedaLugar])
   );
 
+  // Consultar los favoritos de SQLite asociados a la cuenta activa
   const cargarDatos = async () => {
     setCargando(true);
     try {
-      const favs = await obtenerFavoritosIds();
+      const usr = await obtenerUsuario();
+      const usrId = usr?.email || usr?.id || usr?.nombre || 'usuario_invitado';
+
+      const favs = await obtenerFavoritosIds(usrId);
       setFavoritosIds(Array.isArray(favs) ? favs : []);
 
       const resLugares = await obtenerLugares(busquedaLugar);
@@ -156,7 +160,7 @@ export default function PantallaPrincipal() {
     }
   };
 
-  // 🔒 Alterna favorito pidiendo autenticación
+  // Guardar o quitar favorito pasando el ID del usuario
   const handleToggleFavorito = async (lugarId: string) => {
     const token = await obtenerToken();
     if (!token) {
@@ -164,8 +168,13 @@ export default function PantallaPrincipal() {
       return;
     }
 
-    await alternarFavorito(lugarId);
-    const favsActualizados = await obtenerFavoritosIds();
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    
+    const usr = await obtenerUsuario();
+    const usrId = usr?.email || usr?.id || usr?.nombre || 'usuario_invitado';
+
+    await alternarFavorito(lugarId, usrId);
+    const favsActualizados = await obtenerFavoritosIds(usrId);
     setFavoritosIds(Array.isArray(favsActualizados) ? favsActualizados : []);
   };
 

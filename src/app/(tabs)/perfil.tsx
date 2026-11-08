@@ -18,9 +18,7 @@ import {
   borrarToken,
   Usuario,
 } from '../../servicios/autenticacion';
-
-// 🟢 Importamos useTema y ModoTema desde tu TemaContext
-import { useTema, ModoTema } from '../../contexto/TemaContext';
+import { useTema } from '../../contexto/TemaContext';
 
 // 🏷️ Categorías disponibles para las preferencias en SQLite
 const CATEGORIAS_DISPONIBLES = [
@@ -32,14 +30,17 @@ const CATEGORIAS_DISPONIBLES = [
 ];
 
 export default function PantallaPerfil() {
-  // 🟢 1. Consumimos exactamente las propiedades de tu TemaContext
-  const { colores, esOscuro, modo, setModo } = useTema();
+  const temaContext = useTema();
+  const { colores, esOscuro } = temaContext || {};
 
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [cargando, setCargando] = useState<boolean>(true);
+
+  // Estados de Preferencias
+  const [tema, setTema] = useState<'claro' | 'oscuro' | 'sistema'>('claro');
   const [categoriasInteres, setCategoriasInteres] = useState<string[]>(['cat-termas']);
 
-  // Recargar perfil y SQLite cada vez que la solapa gana foco
+  // Recargar estado de sesión y preferencias cada vez que la solapa gana foco
   useFocusEffect(
     useCallback(() => {
       cargarPerfilYPreferencias();
@@ -61,13 +62,23 @@ export default function PantallaPerfil() {
 
       // 2. Carga de preferencias guardadas en SQLite
       const db = await obtenerConexionDB();
-    
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS preferencias (
+          clave TEXT PRIMARY KEY NOT NULL,
+          valor TEXT NOT NULL
+        );
+      `);
+
       const regTema = await db.getFirstAsync<{ valor: string }>(
         'SELECT valor FROM preferencias WHERE clave = ?;',
         ['tema_visual']
       );
       if (regTema?.valor) {
-        setModo(regTema.valor as ModoTema);
+        const temaGuardado = regTema.valor as 'claro' | 'oscuro' | 'sistema';
+        setTema(temaGuardado);
+        
+        // Notificamos al contexto global para que toda la app tome el tema guardado
+        notificarContextoTema(temaGuardado);
       }
 
       const regCat = await db.getFirstAsync<{ valor: string }>(
@@ -85,24 +96,32 @@ export default function PantallaPerfil() {
     }
   };
 
-  // 🎨 Cambia el tema usando setModo del TemaContext y guarda en SQLite
-  const handleCambiarTema = async (nuevoModo: ModoTema) => {
-    // 1. Cambiamos el modo en el TemaContext (se actualizan Mapa, Perfil, Tabs y Headers al instante)
-    setModo(nuevoModo);
+  // Helper para notificar a TemaContext independientemente de cómo se llame el método interno
+  const notificarContextoTema = (nuevoTema: 'claro' | 'oscuro' | 'sistema') => {
+    if (!temaContext) return;
+    const ctx = temaContext as any;
+    if (typeof ctx.setTema === 'function') ctx.setTema(nuevoTema);
+    else if (typeof ctx.setTemaVisual === 'function') ctx.setTemaVisual(nuevoTema);
+    else if (typeof ctx.cambiarTema === 'function') ctx.cambiarTema(nuevoTema);
+    else if (typeof ctx.setModo === 'function') ctx.setModo(nuevoTema);
+  };
 
-    // 2. Persistimos en SQLite
+  const handleCambiarTema = async (nuevoTema: 'claro' | 'oscuro' | 'sistema') => {
+    setTema(nuevoTema);
+    notificarContextoTema(nuevoTema);
+
     try {
       const db = await obtenerConexionDB();
       await db.runAsync(
         'INSERT OR REPLACE INTO preferencias (clave, valor) VALUES (?, ?);',
-        ['tema_visual', nuevoModo]
+        ['tema_visual', nuevoTema]
       );
     } catch (error) {
       console.error('Error guardando tema en SQLite:', error);
     }
   };
 
-  // 🏷️ Guardar categorías de interés en SQLite
+  // Guardar categorías de interés en SQLite
   const handleToggleCategoria = async (catId: string) => {
     let seleccionadas: string[];
     if (categoriasInteres.includes(catId)) {
@@ -123,7 +142,7 @@ export default function PantallaPerfil() {
     }
   };
 
-  // 🚪 Cerrar sesión
+  // Cerrar sesión
   const handleCerrarSesion = async () => {
     Alert.alert('Cerrar Sesión', '¿Estás segura de que querés salir?', [
       { text: 'Cancelar', style: 'cancel' },
@@ -142,7 +161,7 @@ export default function PantallaPerfil() {
 
   if (cargando) {
     return (
-      <View style={[styles.centerContainer, { backgroundColor: colores.fondo }]}>
+      <View style={[styles.centerContainer, { backgroundColor: colores?.fondo || '#F8F9FA' }]}>
         <ActivityIndicator size="large" color="#0284c7" />
       </View>
     );
@@ -151,12 +170,12 @@ export default function PantallaPerfil() {
   // 👤 VISTA MODO INVITADO (Si NO hay sesión activa)
   if (!usuario) {
     return (
-      <View style={[styles.container, styles.centerContainer, { backgroundColor: colores.fondo }]}>
-        <Ionicons name="person-circle-outline" size={80} color={colores.textoSecundario} />
-        <Text style={[styles.tituloInvitado, { color: colores.textoPrincipal }]}>
+      <View style={[styles.container, styles.centerContainer, { backgroundColor: colores?.fondo || '#F8F9FA' }]}>
+        <Ionicons name="person-circle-outline" size={80} color={colores?.textoSecundario || '#64748B'} />
+        <Text style={[styles.tituloInvitado, { color: colores?.textoPrincipal || '#0F172A' }]}>
           Modo Invitado
         </Text>
-        <Text style={[styles.subtituloInvitado, { color: colores.textoSecundario }]}>
+        <Text style={[styles.subtituloInvitado, { color: colores?.textoSecundario || '#64748B' }]}>
           Estás navegando como turista anónimo. Iniciá sesión para guardar tus atractivos favoritos y sincronizar tu experiencia.
         </Text>
 
@@ -171,23 +190,23 @@ export default function PantallaPerfil() {
     );
   }
 
-  // 👤 VISTA PERFIL ACTIVO (Si SÍ hay sesión activa)
+  // 👤 VISTA PERFIL ACTIVO
   return (
-    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: colores.fondo }]}>
+    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: colores?.fondo || '#F8F9FA' }]}>
       {/* 1. Tarjeta de Perfil */}
       <View
         style={[
           styles.cardPerfil,
-          { backgroundColor: colores.tarjetaFondo, borderColor: colores.tarjetaBorde },
+          { backgroundColor: colores?.tarjetaFondo || '#FFF', borderColor: colores?.tarjetaBorde || '#E2E8F0' },
         ]}
       >
         <View style={styles.avatarContainer}>
           <Ionicons name="person-circle-outline" size={72} color="#0284c7" />
         </View>
-        <Text style={[styles.nombreUsuario, { color: colores.textoPrincipal }]}>
+        <Text style={[styles.nombreUsuario, { color: colores?.textoPrincipal || '#0F172A' }]}>
           {usuario.nombre}
         </Text>
-        <Text style={[styles.emailUsuario, { color: colores.textoSecundario }]}>
+        <Text style={[styles.emailUsuario, { color: colores?.textoSecundario || '#64748B' }]}>
           {usuario.email}
         </Text>
         <View style={styles.badgeSesion}>
@@ -196,28 +215,28 @@ export default function PantallaPerfil() {
       </View>
 
       {/* 🎨 2. Sección de Apariencia / Tema Visual */}
-      <Text style={[styles.seccionTitulo, { color: colores.textoPrincipal }]}>
+      <Text style={[styles.seccionTitulo, { color: colores?.textoPrincipal || '#0F172A' }]}>
         Apariencia de la App
       </Text>
       <View style={styles.opcionesRow}>
         <TouchableOpacity
           style={[
             styles.botonTema,
-            { backgroundColor: colores.tarjetaFondo, borderColor: colores.tarjetaBorde },
-            modo === 'claro' && styles.botonTemaActivo,
+            { backgroundColor: colores?.tarjetaFondo || '#FFF', borderColor: colores?.tarjetaBorde || '#E2E8F0' },
+            tema === 'claro' && styles.botonTemaActivo,
           ]}
           onPress={() => handleCambiarTema('claro')}
         >
           <Ionicons
             name="sunny-outline"
             size={20}
-            color={modo === 'claro' ? '#fff' : colores.textoSecundario}
+            color={tema === 'claro' ? '#fff' : colores?.textoSecundario || '#64748B'}
           />
           <Text
             style={[
               styles.textoTema,
-              { color: colores.textoSecundario },
-              modo === 'claro' && styles.textoTemaActivo,
+              { color: colores?.textoSecundario || '#64748B' },
+              tema === 'claro' && styles.textoTemaActivo,
             ]}
           >
             Claro
@@ -227,21 +246,21 @@ export default function PantallaPerfil() {
         <TouchableOpacity
           style={[
             styles.botonTema,
-            { backgroundColor: colores.tarjetaFondo, borderColor: colores.tarjetaBorde },
-            modo === 'oscuro' && styles.botonTemaActivo,
+            { backgroundColor: colores?.tarjetaFondo || '#FFF', borderColor: colores?.tarjetaBorde || '#E2E8F0' },
+            tema === 'oscuro' && styles.botonTemaActivo,
           ]}
           onPress={() => handleCambiarTema('oscuro')}
         >
           <Ionicons
             name="moon-outline"
             size={20}
-            color={modo === 'oscuro' ? '#fff' : colores.textoSecundario}
+            color={tema === 'oscuro' ? '#fff' : colores?.textoSecundario || '#64748B'}
           />
           <Text
             style={[
               styles.textoTema,
-              { color: colores.textoSecundario },
-              modo === 'oscuro' && styles.textoTemaActivo,
+              { color: colores?.textoSecundario || '#64748B' },
+              tema === 'oscuro' && styles.textoTemaActivo,
             ]}
           >
             Oscuro
@@ -251,21 +270,21 @@ export default function PantallaPerfil() {
         <TouchableOpacity
           style={[
             styles.botonTema,
-            { backgroundColor: colores.tarjetaFondo, borderColor: colores.tarjetaBorde },
-            modo === 'sistema' && styles.botonTemaActivo,
+            { backgroundColor: colores?.tarjetaFondo || '#FFF', borderColor: colores?.tarjetaBorde || '#E2E8F0' },
+            tema === 'sistema' && styles.botonTemaActivo,
           ]}
           onPress={() => handleCambiarTema('sistema')}
         >
           <Ionicons
             name="settings-outline"
             size={20}
-            color={modo === 'sistema' ? '#fff' : colores.textoSecundario}
+            color={tema === 'sistema' ? '#fff' : colores?.textoSecundario || '#64748B'}
           />
           <Text
             style={[
               styles.textoTema,
-              { color: colores.textoSecundario },
-              modo === 'sistema' && styles.textoTemaActivo,
+              { color: colores?.textoSecundario || '#64748B' },
+              tema === 'sistema' && styles.textoTemaActivo,
             ]}
           >
             Sistema
@@ -274,10 +293,10 @@ export default function PantallaPerfil() {
       </View>
 
       {/* 🏷️ 3. Sección de Categorías de Interés (SQLite) */}
-      <Text style={[styles.seccionTitulo, { color: colores.textoPrincipal }]}>
+      <Text style={[styles.seccionTitulo, { color: colores?.textoPrincipal || '#0F172A' }]}>
         Tus Intereses Turísticos
       </Text>
-      <Text style={[styles.seccionSubtitulo, { color: colores.textoSecundario }]}>
+      <Text style={[styles.seccionSubtitulo, { color: colores?.textoSecundario || '#64748B' }]}>
         Tocá las categorías para elegirlas o desmarcarlas:
       </Text>
 
@@ -290,8 +309,8 @@ export default function PantallaPerfil() {
               style={[
                 styles.chipInteres,
                 {
-                  backgroundColor: seleccionada ? '#0284c7' : colores.tarjetaFondo,
-                  borderColor: seleccionada ? '#0284c7' : colores.tarjetaBorde,
+                  backgroundColor: seleccionada ? '#0284c7' : colores?.tarjetaFondo || '#FFF',
+                  borderColor: seleccionada ? '#0284c7' : colores?.tarjetaBorde || '#E2E8F0',
                 },
               ]}
               onPress={() => handleToggleCategoria(cat.id)}

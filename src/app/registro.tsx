@@ -12,12 +12,8 @@ import {
   Platform,
 } from 'react-native';
 import { useRouter, Link } from 'expo-router';
-
-// 🎨 Importamos el hook del Tema Global
-import { useTema } from '../contexto/TemaContext'; // Ajustá a '../contexto/TemaContext' según tu carpeta
-
-// Servicios de autenticación
-import { guardarToken, guardarUsuario } from '../servicios/autenticacion';
+import { useTema } from '../contexto/TemaContext';
+import { registrarUsuario } from '../servicios/autenticacion';
 
 export default function PantallaRegistro() {
   const router = useRouter();
@@ -60,23 +56,32 @@ export default function PantallaRegistro() {
     return Object.keys(nuevosErrores).length === 0;
   };
 
+  // Registro real enviando POST a la API backend
   const handleRegistro = async () => {
     if (!validarFormulario()) return;
 
     setCargando(true);
     try {
-      const tokenSesion = `token_usr_${Math.random().toString(36).substring(2, 10)}`;
+      const emailLimpio = email.trim().toLowerCase();
 
-      // Guardamos el token y los datos del usuario en SecureStore
-      await guardarToken(tokenSesion);
-      await guardarUsuario({ nombre, email, password });
+      // 1. Enviamos el registro a la API real (NestJS)
+      const resReg = await registrarUsuario(nombre.trim(), emailLimpio, password);
 
-      Alert.alert('¡Cuenta creada!', `Bienvenida/o, ${nombre}. Tu usuario fue guardado.`);
-
-      // Redirigimos al inicio
-      router.replace('/');
+      if (resReg.exito) {
+        Alert.alert(
+          '¡Cuenta creada!',
+          `Bienvenido/a, ${nombre}. Tu cuenta y token fueron guardados.`
+        );
+        // Redirigimos a la pantalla de Perfil con el usuario autenticado
+        router.replace('/perfil');
+      } else {
+        Alert.alert(
+          'Error al registrar',
+          resReg.mensaje || 'No se pudo crear la cuenta en el servidor.'
+        );
+      }
     } catch (error) {
-      Alert.alert('Error', 'No se pudo crear la cuenta. Intentalo de nuevo.');
+      Alert.alert('Error', 'No se pudo conectar con el servidor.');
     } finally {
       setCargando(false);
     }
@@ -147,7 +152,6 @@ export default function PantallaRegistro() {
         {errores.email && (
           <Text style={styles.textoError}>{errores.email}</Text>
         )}
-        
 
         {/* Campo Contraseña */}
         <Text style={[styles.label, { color: colores.textoPrincipal }]}>

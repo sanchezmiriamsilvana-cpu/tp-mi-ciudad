@@ -2,7 +2,7 @@ import axios from 'axios';
 import { obtenerToken } from './autenticacion';
 
 // 1. URL base desde variables de entorno con fallback a tu IP local
-export const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://c8f7fdn3-3000.brs.devtunnels.ms';
+export const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.40:3000';
 
 // 2. Instancia centralizada de Axios
 export const api = axios.create({
