@@ -1,5 +1,7 @@
 import { api } from './api';
-import { Lugar, Categoria } from '../tipos/lugares';
+import { mensajeDeErrorApi } from './errores';
+import { extraerLista, extraerObjeto } from './normalizacion';
+import { Categoria, Lugar } from '../tipos/lugares';
 
 export interface RespuestaServicio<T> {
   exito: boolean;
@@ -7,26 +9,36 @@ export interface RespuestaServicio<T> {
   mensaje?: string;
 }
 
+const CAMPOS_LISTA = ['datos', 'data', 'items', 'results', 'lugares', 'categorias', 'contenido'];
+const CAMPOS_OBJETO = ['datos', 'data', 'lugar', 'item', 'resultado'];
+
+/** Registra el fallo como advertencia (sin abrir el overlay rojo de Expo Go). */
+function avisarFallo(error: unknown, contexto: string): string {
+  const mensaje = mensajeDeErrorApi(error, contexto);
+  console.warn(`[API] ${mensaje}`);
+  return mensaje;
+}
+
 /**
- * Obtiene las categorías desde la API real (/categorias)
+ * Obtiene las categorías desde la API configurada en `EXPO_PUBLIC_BASE_URL`
+ * (`GET /categorias`).
  */
 export const obtenerCategorias = async (): Promise<RespuestaServicio<Categoria[]>> => {
   try {
     const respuesta = await api.get('/categorias');
-    const datos: Categoria[] = respuesta.data?.datos || respuesta.data || [];
+    const datos = extraerLista(respuesta.data, CAMPOS_LISTA) as Categoria[];
     return { exito: true, datos };
-  } catch (error: any) {
-    console.error('Error al obtener categorías de la API:', error);
+  } catch (error) {
     return {
       exito: false,
       datos: [],
-      mensaje: 'Error al conectar con el servidor',
+      mensaje: avisarFallo(error, 'las categorías'),
     };
   }
 };
 
 /**
- * Obtiene el listado de lugares desde la API real (/lugares)
+ * Obtiene el listado de lugares desde la API configurada (`GET /lugares`).
  */
 export const obtenerLugares = async (
   busqueda: string = '',
@@ -42,7 +54,7 @@ export const obtenerLugares = async (
     }
 
     const respuesta = await api.get('/lugares', { params });
-    let lista: Lugar[] = respuesta.data?.datos || respuesta.data || [];
+    let lista = extraerLista(respuesta.data, CAMPOS_LISTA) as Lugar[];
 
     if (busqueda.trim() !== '') {
       const termino = busqueda.toLowerCase();
@@ -59,37 +71,43 @@ export const obtenerLugares = async (
     }
 
     return { exito: true, datos: lista };
-  } catch (error: any) {
-    console.error('Error al obtener lugares de la API:', error);
+  } catch (error) {
     return {
       exito: false,
       datos: [],
-      mensaje: 'Error al cargar lugares',
+      mensaje: avisarFallo(error, 'los lugares'),
     };
   }
 };
 
 /**
- * Obtiene el detalle de un lugar específico (/lugares/:id)
+ * Obtiene el detalle de un lugar (`GET /lugares/:id`).
  */
 export const obtenerLugarPorId = async (
   id: string
 ): Promise<RespuestaServicio<Lugar | null>> => {
   try {
-    const respuesta = await api.get(`/lugares/${id}`);
-    const lugar: Lugar = respuesta.data?.datos || respuesta.data || null;
+    const respuesta = await api.get(`/lugares/${encodeURIComponent(id)}`);
+    const bruto = extraerObjeto(respuesta.data, CAMPOS_OBJETO);
+    const lugar = bruto && !bruto.id ? extraerObjeto(bruto, CAMPOS_OBJETO) : bruto;
+
+    if (!lugar || !lugar.id) {
+      return {
+        exito: false,
+        datos: null,
+        mensaje: 'El lugar solicitado no existe.',
+      };
+    }
 
     return {
-      exito: !!lugar,
-      datos: lugar,
-      mensaje: lugar ? undefined : 'Lugar no encontrado',
+      exito: true,
+      datos: lugar as unknown as Lugar,
     };
-  } catch (error: any) {
-    console.error(`Error al obtener lugar ${id} de la API:`, error);
+  } catch (error) {
     return {
       exito: false,
       datos: null,
-      mensaje: 'Error al obtener el detalle del lugar',
+      mensaje: avisarFallo(error, 'el detalle del lugar'),
     };
   }
 };

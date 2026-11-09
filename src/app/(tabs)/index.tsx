@@ -16,7 +16,8 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Lugar, Categoria } from '../../tipos/lugares';
 import { obtenerLugares, obtenerCategorias } from '../../servicios/lugares';
-import { obtenerToken, obtenerUsuario } from '../../servicios/autenticacion';
+import { mensajeDeErrorApi } from '../../servicios/errores';
+import { obtenerToken } from '../../servicios/autenticacion';
 import {
   inicializarBaseDatosFavoritos,
   obtenerFavoritosIds,
@@ -32,16 +33,16 @@ import {
 } from '../../servicios/ubicacion';
 
 import { useTema } from '../../contexto/TemaContext';
-import * as Haptics from 'expo-haptics';
 import { BASE_URL } from '../../servicios/api';
 
 const IMAGEN_DEFAULT = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSYwl49SBaAWa5x5iCzdte_NsHghIRZiSWyphHOVNp6aw&s';
 
+// 🟢 Helper seguro para obtener la URL de imagen y reemplazar localhost por BASE_URL
 const obtenerImagenSegura = (imagenes: any): string => {
   if (!imagenes) return IMAGEN_DEFAULT;
 
   // Extraemos la primera posición si viene como arreglo
-  let url = Array.isArray(imagenes) && imagenes.length > 0 ? imagenes [0]: imagenes;
+  let url = Array.isArray(imagenes) && imagenes.length > 0 ? imagenes[0] : imagenes;
 
   if (typeof url === 'object' && url !== null) {
     url = url.url || url.uri || '';
@@ -60,7 +61,7 @@ const obtenerImagenSegura = (imagenes: any): string => {
   return url;
 };
 
-// Helper que verifica si el lugar cuenta con audioguía disponible
+// 🟢 Helper que verifica si el lugar cuenta con audioguía disponible
 const tieneAudioguia = (lugar: any): boolean => {
   if (!lugar) return false;
   const audio = lugar.audioUrl || lugar.audio || lugar.audioguia || lugar.audiolibro;
@@ -82,47 +83,71 @@ export default function PantallaPrincipal() {
 
   const [miUbicacion, setMiUbicacion] = useState<Coordenadas | null>(null);
   const [favoritosIds, setFavoritosIds] = useState<string[]>([]);
+  const [errorLugares, setErrorLugares] = useState<string | null>(null);
+
+  const cargarCategorias = useCallback(async () => {
+    try {
+      const resCategorias = await obtenerCategorias();
+      setCategorias(Array.isArray(resCategorias.datos) ? resCategorias.datos : []);
+
+      if (!resCategorias.exito) {
+        setErrorLugares(
+          (actual) => actual ?? resCategorias.mensaje ?? 'No se pudieron cargar las categorías.'
+        );
+      }
+    } catch (error) {
+      const mensaje = mensajeDeErrorApi(error, 'las categorías');
+      console.warn(`[API] ${mensaje}`);
+      setErrorLugares((actual) => actual ?? mensaje);
+    }
+  }, []);
 
   useEffect(() => {
     async function inicializar() {
       try {
         await inicializarBaseDatosFavoritos();
-        const resCategorias = await obtenerCategorias();
-        setCategorias(resCategorias.datos || resCategorias || []);
+        await cargarCategorias();
 
         const pos = await obtenerUbicacionActual();
         if (pos) setMiUbicacion(pos);
       } catch (error) {
-        console.error('Error al inicializar la pantalla principal:', error);
+        console.warn('No se pudo inicializar parte de la pantalla principal:', error);
       }
     }
     inicializar();
-  }, []);
+  }, [cargarCategorias]);
 
-  useFocusEffect(
-    useCallback(() => {
-      cargarDatos();
-    }, [busquedaLugar])
-  );
-
-  // Consultar los favoritos de SQLite asociados a la cuenta activa
-  const cargarDatos = async () => {
+  const cargarDatos = useCallback(async () => {
     setCargando(true);
     try {
-      const usr = await obtenerUsuario();
-      const usrId = usr?.email || usr?.id || usr?.nombre || 'usuario_invitado';
-
-      const favs = await obtenerFavoritosIds(usrId);
+      const favs = await obtenerFavoritosIds();
       setFavoritosIds(Array.isArray(favs) ? favs : []);
 
       const resLugares = await obtenerLugares(busquedaLugar);
-      const lista: Lugar[] = resLugares.datos || resLugares || [];
-      setLugares(Array.isArray(lista) ? lista : []);
+      const lista = Array.isArray(resLugares.datos) ? resLugares.datos : [];
+      setLugares(lista);
+      setErrorLugares(
+        resLugares.exito ? null : resLugares.mensaje ?? 'No se pudieron cargar los lugares.'
+      );
     } catch (error) {
-      console.error('Error al cargar lugares de la API:', error);
+      const mensaje = mensajeDeErrorApi(error, 'los lugares');
+      console.warn(`[API] ${mensaje}`);
+      setErrorLugares(mensaje);
     } finally {
       setCargando(false);
     }
+  }, [busquedaLugar]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void cargarDatos();
+    }, [cargarDatos])
+  );
+
+  const reintentarCarga = () => {
+    setErrorLugares(null);
+    void cargarCategorias();
+    void cargarDatos();
   };
 
   const handleToggleCategoria = (catId: string) => {
@@ -160,7 +185,7 @@ export default function PantallaPrincipal() {
     }
   };
 
-  // Guardar o quitar favorito pasando el ID del usuario
+  // 🔒 Alterna favorito pidiendo autenticación
   const handleToggleFavorito = async (lugarId: string) => {
     const token = await obtenerToken();
     if (!token) {
@@ -168,13 +193,8 @@ export default function PantallaPrincipal() {
       return;
     }
 
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    
-    const usr = await obtenerUsuario();
-    const usrId = usr?.email || usr?.id || usr?.nombre || 'usuario_invitado';
-
-    await alternarFavorito(lugarId, usrId);
-    const favsActualizados = await obtenerFavoritosIds(usrId);
+    await alternarFavorito(lugarId);
+    const favsActualizados = await obtenerFavoritosIds();
     setFavoritosIds(Array.isArray(favsActualizados) ? favsActualizados : []);
   };
 
@@ -217,7 +237,7 @@ export default function PantallaPrincipal() {
             <TouchableOpacity 
               style={styles.iconButton} 
               accessibilityLabel="Audioguías"
-              onPress={() => router.push('/audioguias' as any)}
+              onPress={() => router.push('/audioguias-modulo' as any)}
             >
               <Ionicons name="headset-outline" size={22} color="#0284c7" />
             </TouchableOpacity>
@@ -252,6 +272,27 @@ export default function PantallaPrincipal() {
             style={[styles.searchInput, { color: colores.textoPrincipal }]}
           />
         </View>
+
+        {errorLugares && (
+          <View style={[styles.bannerError, { backgroundColor: colores.tarjetaFondo, borderColor: '#fecaca' }]}>
+            <Ionicons name="cloud-offline-outline" size={18} color="#b91c1c" />
+            <Text
+              accessibilityRole="alert"
+              style={[styles.bannerErrorTexto, { color: colores.textoPrincipal }]}
+              numberOfLines={2}
+            >
+              {errorLugares}
+            </Text>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Reintentar carga de lugares"
+              onPress={reintentarCarga}
+              style={styles.bannerErrorBoton}
+            >
+              <Text style={styles.bannerErrorAccion}>Reintentar</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Chips de Categorías */}
         {categorias.length > 0 && (
@@ -383,7 +424,7 @@ export default function PantallaPrincipal() {
                   {tieneAudioguia(lugarSeleccionado) && (
                     <TouchableOpacity 
                       style={styles.btnAudioguiaFlotante} 
-                      onPress={() => router.push('/audioguias' as any)}
+                      onPress={() => router.push('/audioguias-modulo' as any)}
                     >
                       <Ionicons name="headset" size={14} color="#0284c7" />
                       <Text style={styles.btnAudioguiaTexto}>Audioguía</Text>
@@ -457,7 +498,7 @@ export default function PantallaPrincipal() {
                         {poseeAudio && (
                           <TouchableOpacity
                             style={styles.btnAudioguiaCard}
-                            onPress={() => router.push('/audioguias' as any)}
+                            onPress={() => router.push('/audioguias-modulo' as any)}
                           >
                             <Ionicons name="headset-outline" size={14} color="#0284c7" />
                             <Text style={styles.btnAudioguiaTexto}>Audioguía</Text>
@@ -512,6 +553,19 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   searchInput: { flex: 1, fontSize: 15 },
+  bannerError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 10,
+  },
+  bannerErrorTexto: { flex: 1, fontSize: 12, lineHeight: 17 },
+  bannerErrorBoton: { paddingHorizontal: 8, paddingVertical: 4 },
+  bannerErrorAccion: { color: '#0284c7', fontSize: 12, fontWeight: '700' },
   categoriesWrapper: { maxHeight: 42, marginBottom: 10 },
   categoryChip: {
     flexDirection: 'row',

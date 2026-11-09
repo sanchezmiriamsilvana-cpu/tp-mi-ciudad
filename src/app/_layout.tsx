@@ -2,8 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { estaConectado } from '../servicios/red'; 
-import { TemaProvider, useTema } from '../contexto/TemaContext'; 
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { estaConectado } from '../servicios/red';
+import { TemaProvider, useTema } from '../contexto/TemaContext';
+import { AudioguiasProvider } from '../features/audioguias-agenda/hooks/useAudioguia';
+import { AudioguiasCatalogoProvider } from '../features/audioguias-agenda/hooks/useAudioguias';
+import AudioguiasAgendaOverlays from '../features/audioguias-agenda/components/AudioguiasAgendaOverlays';
 
 // Componente del banner de red
 function BannerRed() {
@@ -80,16 +84,31 @@ function ContenidoLayout() {
         <Stack.Screen name="favoritos" options={{ title: 'Mis Favoritos' }} />
         <Stack.Screen name="login" options={{ title: 'Iniciar Sesión', presentation: 'modal' }} />
         <Stack.Screen name="registro" options={{ title: 'Crear Cuenta' }} />
+
+        {/* 3. Audioguías y agenda de eventos */}
+        <Stack.Screen name="audioguias-modulo" options={{ headerShown: false }} />
+        <Stack.Screen name="audioguia-player" options={{ headerShown: false }} />
+        <Stack.Screen name="agenda-eventos" options={{ headerShown: false }} />
+        <Stack.Screen name="audioguias" options={{ headerShown: false }} />
       </Stack>
+
+      {/* Mini reproductor y navegación desde notificaciones */}
+      <AudioguiasAgendaOverlays />
     </View>
   );
 }
 
-// Layout Principal envuelto en el TemaProvider
+// Layout Principal envuelto en los proveedores globales
 export default function RootLayout() {
   return (
-    <TemaProvider>
-      <ContenidoLayout />
-    </TemaProvider>
+    <SafeAreaProvider>
+      <TemaProvider>
+        <AudioguiasCatalogoProvider>
+          <AudioguiasProvider>
+            <ContenidoLayout />
+          </AudioguiasProvider>
+        </AudioguiasCatalogoProvider>
+      </TemaProvider>
+    </SafeAreaProvider>
   );
 }

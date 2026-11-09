@@ -12,7 +12,6 @@ interface BrujulaProps {
 
 export default function BrujulaFlecha({ origen, destino, nombreLugar }: BrujulaProps) {
   const [anguloBrujula, setAnguloBrujula] = useState<number>(0);
-  const [suscripcion, setSuscripcion] = useState<any>(null);
 
   useEffect(() => {
     // Configurar frecuencia de actualización (en milisegundos)
@@ -28,8 +27,6 @@ export default function BrujulaFlecha({ origen, destino, nombreLugar }: BrujulaP
       }
       setAnguloBrujula(angulo);
     });
-
-    setSuscripcion(sub);
 
     // Cancelar la suscripción al desmontar el componente para ahorrar batería
     return () => {

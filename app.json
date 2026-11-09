@@ -1,19 +1,19 @@
 {
   "expo": {
-    "name": "Mi Ciudad - Colón",
+    "name": "tp-mi-ciudad",
     "slug": "tp-mi-ciudad",
     "scheme": "miciudad",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "automatic",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0284c7"
-    },
+    "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "audio"
+        ]
+      }
     },
     "android": {
       "package": "com.miciudad.colon",
@@ -38,14 +38,9 @@
       "expo-router",
       "expo-secure-store",
       "expo-audio",
-      [
-        "expo-splash-screen",
-        {
-          "image": "./assets/splash-icon.png",
-          "backgroundColor": "#0284c7",
-          "imageWidth": 200
-        }
-      ]
+      "expo-notifications",
+      "expo-font",
+      "expo-asset"
     ],
     "extra": {
       "router": {},

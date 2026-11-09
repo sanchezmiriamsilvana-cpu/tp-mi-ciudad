@@ -12,7 +12,11 @@ import {
   Platform,
 } from 'react-native';
 import { useRouter, Link } from 'expo-router';
-import { useTema } from '../contexto/TemaContext';
+
+// 🎨 Importamos el hook del Tema Global
+import { useTema } from '../contexto/TemaContext'; // Ajustá a '../contexto/TemaContext' según tu carpeta
+
+// Servicios de autenticación conectados a la API real
 import { registrarUsuario } from '../servicios/autenticacion';
 
 export default function PantallaRegistro() {
@@ -44,8 +48,8 @@ export default function PantallaRegistro() {
 
     if (!password) {
       nuevosErrores.password = 'La contraseña es obligatoria.';
-    } else if (password.length < 6) {
-      nuevosErrores.password = 'La contraseña debe tener al menos 6 caracteres.';
+    } else if (password.length < 8) {
+      nuevosErrores.password = 'La contraseña debe tener al menos 8 caracteres.';
     }
 
     if (password !== confirmPassword) {
@@ -56,32 +60,26 @@ export default function PantallaRegistro() {
     return Object.keys(nuevosErrores).length === 0;
   };
 
-  // Registro real enviando POST a la API backend
   const handleRegistro = async () => {
     if (!validarFormulario()) return;
 
     setCargando(true);
     try {
-      const emailLimpio = email.trim().toLowerCase();
+      const resultado = await registrarUsuario(nombre, email, password);
 
-      // 1. Enviamos el registro a la API real (NestJS)
-      const resReg = await registrarUsuario(nombre.trim(), emailLimpio, password);
-
-      if (resReg.exito) {
+      if (!resultado.exito) {
         Alert.alert(
-          '¡Cuenta creada!',
-          `Bienvenido/a, ${nombre}. Tu cuenta y token fueron guardados.`
+          'No se pudo crear la cuenta',
+          resultado.mensaje ?? 'Intentalo de nuevo en unos segundos.'
         );
-        // Redirigimos a la pantalla de Perfil con el usuario autenticado
-        router.replace('/perfil');
-      } else {
-        Alert.alert(
-          'Error al registrar',
-          resReg.mensaje || 'No se pudo crear la cuenta en el servidor.'
-        );
+        return;
       }
+
+      Alert.alert('¡Cuenta creada!', `Bienvenida/o, ${nombre}.`);
+      router.replace('/');
     } catch (error) {
-      Alert.alert('Error', 'No se pudo conectar con el servidor.');
+      console.warn('Error inesperado al registrar usuario:', error);
+      Alert.alert('Error', 'No se pudo crear la cuenta. Intentalo de nuevo.');
     } finally {
       setCargando(false);
     }
@@ -152,6 +150,7 @@ export default function PantallaRegistro() {
         {errores.email && (
           <Text style={styles.textoError}>{errores.email}</Text>
         )}
+        
 
         {/* Campo Contraseña */}
         <Text style={[styles.label, { color: colores.textoPrincipal }]}>

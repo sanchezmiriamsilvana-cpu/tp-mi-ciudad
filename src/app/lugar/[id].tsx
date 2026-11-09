@@ -16,8 +16,9 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Lugar } from '../../tipos/lugares';
 import { obtenerLugarPorId } from '../../servicios/lugares';
+import { mensajeDeErrorApi } from '../../servicios/errores';
 import { obtenerFavoritosIds, alternarFavorito } from '../../servicios/favoritos';
-import { obtenerToken, obtenerUsuario } from '../../servicios/autenticacion';
+import { obtenerToken } from '../../servicios/autenticacion';
 import {
   obtenerUbicacionActual,
   abrirMapaNativo,
@@ -26,8 +27,42 @@ import {
 
 import { useTema } from '../../contexto/TemaContext';
 import BrujulaFlecha from '../componentes/BrujulaFlecha';
+import { BASE_URL } from '../../servicios/api';
 
 const DIAS_SEMANA = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+const IMAGEN_DEFAULT = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSYwl49SBaAWa5x5iCzdte_NsHghIRZiSWyphHOVNp6aw&s';
+
+// 🟢 Helper que limpia la URL reemplazando localhost por BASE_URL
+const normalizarUrlImagen = (rawUrl: any): string => {
+  if (!rawUrl || typeof rawUrl !== 'string' || rawUrl.trim() === '') return IMAGEN_DEFAULT;
+  let url = rawUrl.trim();
+  if (url.includes('localhost:3000')) {
+    const urlLimpia = BASE_URL.replace(/\/$/, '');
+    return url.replace('http://localhost:3000', urlLimpia);
+  }
+  return url;
+};
+
+// 🟢 Helper que garantiza un arreglo (string[]) real de fotos válidas
+const obtenerListaImagenes = (imagenes: any): string[] => {
+  if (!imagenes) return [IMAGEN_DEFAULT];
+
+  if (Array.isArray(imagenes)) {
+    if (imagenes.length === 0) return [IMAGEN_DEFAULT];
+    return imagenes.map((img) => normalizarUrlImagen(img));
+  }
+
+  if (typeof imagenes === 'string') {
+    return [normalizarUrlImagen(imagenes)];
+  }
+
+  if (typeof imagenes === 'object' && imagenes !== null) {
+    const uri = imagenes.url || imagenes.uri || '';
+    return [normalizarUrlImagen(uri)];
+  }
+
+  return [IMAGEN_DEFAULT];
+};
 
 export default function DetalleLugarPantalla() {
   const { colores } = useTema();
@@ -37,43 +72,60 @@ export default function DetalleLugarPantalla() {
 
   const [detalleLugar, setDetalleLugar] = useState<Lugar | null>(null);
   const [cargando, setCargando] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [intento, setIntento] = useState<number>(0);
   const [esFavorito, setEsFavorito] = useState<boolean>(false);
   const [miUbicacion, setMiUbicacion] = useState<Coordenadas | null>(null);
 
   useEffect(() => {
+    let activo = true;
+
     async function cargarDetalle() {
-      if (!id) return;
-      setCargando(true);
-      try {
-        // 1. Obtener datos del lugar
-        const res = await obtenerLugarPorId(id);
-        setDetalleLugar(res.datos);
-
-        //  2. Cargar favoritos específicos del usuario activo
-        const usr = await obtenerUsuario();
-        const usrId = usr?.email || 'usuario_invitado';
-
-        const favs = await obtenerFavoritosIds(usrId);
-        setEsFavorito(favs.includes(id));
-      } catch (error) {
-        console.error('Error al obtener detalle:', error);
-      } finally {
+      if (!id) {
         setCargando(false);
+        setError('No se indicó el lugar a mostrar.');
+        return;
       }
 
-      // 3. Obtener ubicación en segundo plano
+      setCargando(true);
+      setError(null);
+
+      try {
+        const res = await obtenerLugarPorId(id);
+        if (!activo) return;
+
+        if (res.exito && res.datos) {
+          setDetalleLugar(res.datos);
+          const favs = await obtenerFavoritosIds();
+          if (activo) setEsFavorito(Array.isArray(favs) && favs.includes(id));
+        } else {
+          setDetalleLugar(null);
+          setError(res.mensaje ?? 'No se pudo cargar el lugar.');
+        }
+      } catch (fallo) {
+        if (!activo) return;
+        const mensaje = mensajeDeErrorApi(fallo, 'el lugar');
+        console.warn(`[API] ${mensaje}`);
+        setDetalleLugar(null);
+        setError(mensaje);
+      } finally {
+        if (activo) setCargando(false);
+      }
+
       try {
         const pos = await obtenerUbicacionActual();
-        if (pos) setMiUbicacion(pos);
+        if (activo && pos) setMiUbicacion(pos);
       } catch (err) {
         console.warn('GPS tardó o no estuvo disponible:', err);
       }
     }
 
     cargarDetalle();
-  }, [id]);
+    return () => {
+      activo = false;
+    };
+  }, [id, intento]);
 
-  //  Manejo de favorito asociándolo a la cuenta del usuario activo
   const handleToggleFavorito = async () => {
     if (!id) return;
     const token = await obtenerToken();
@@ -82,26 +134,21 @@ export default function DetalleLugarPantalla() {
       return;
     }
 
-    const usr = await obtenerUsuario();
-    const usrId = usr?.email || 'usuario_invitado';
-
-    await alternarFavorito(id, usrId);
-    const favsActualizados = await obtenerFavoritosIds(usrId);
-    setEsFavorito(favsActualizados.includes(id));
+    await alternarFavorito(id);
+    const favsActualizados = await obtenerFavoritosIds();
+    setEsFavorito(Array.isArray(favsActualizados) && favsActualizados.includes(id));
   };
 
-  // Acción para llamar por teléfono
   const handleLlamar = (telefono: string) => {
     Linking.openURL(`tel:${telefono}`);
   };
 
-  // Acción para abrir sitio web
   const handleAbrirWeb = (url: string) => {
     const webUrl = url.startsWith('http') ? url : `https://${url}`;
     Linking.openURL(webUrl);
   };
 
-  if (cargando || !detalleLugar) {
+  if (cargando) {
     return (
       <SafeAreaProvider>
         <SafeAreaView style={[styles.containerCargando, { backgroundColor: colores.fondo }]}>
@@ -111,10 +158,35 @@ export default function DetalleLugarPantalla() {
     );
   }
 
-  // Normalización de imágenes
-  const listaImagenes: string[] = Array.isArray(detalleLugar.imagenes)
-    ? detalleLugar.imagenes
-    : [detalleLugar.imagenes as any];
+  if (error || !detalleLugar) {
+    return (
+      <SafeAreaProvider>
+        <SafeAreaView style={[styles.estadoContainer, { backgroundColor: colores.fondo }]}>
+          <Ionicons name="cloud-offline-outline" size={44} color={colores.textoSecundario} />
+          <Text style={[styles.estadoTitulo, { color: colores.textoPrincipal }]}>
+            No se pudo cargar el lugar
+          </Text>
+          <Text style={[styles.estadoTexto, { color: colores.textoSecundario }]}>
+            {error ?? 'El lugar no está disponible.'}
+          </Text>
+          <TouchableOpacity
+            accessibilityRole="button"
+            style={styles.botonReintentar}
+            onPress={() => setIntento((valor) => valor + 1)}
+          >
+            <Ionicons name="refresh" size={17} color="#FFF" />
+            <Text style={styles.textoReintentar}>Reintentar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity accessibilityRole="button" onPress={() => router.back()} style={styles.botonVolverTexto}>
+            <Text style={styles.volverTexto}>Volver</Text>
+          </TouchableOpacity>
+        </SafeAreaView>
+      </SafeAreaProvider>
+    );
+  }
+
+  // 🟢 Normalización correcta que devuelve un arreglo real de imágenes
+  const listaImagenes = obtenerListaImagenes(detalleLugar.imagenes);
 
   return (
     <SafeAreaProvider>
@@ -134,15 +206,15 @@ export default function DetalleLugarPantalla() {
               keyExtractor={(_, index) => index.toString()}
               showsHorizontalScrollIndicator={false}
               renderItem={({ item }) => (
-                <Image source={{ uri: item }} style={styles.detailImageGallery} />
+                <Image source={{ uri: item }} style={styles.detailImageGallery} resizeMode="cover" />
               )}
             />
           ) : (
-            <Image source={{ uri: listaImagenes [0] }} style={styles.detailImage} />
+            <Image source={{ uri: listaImagenes [0]}} style={styles.detailImage} resizeMode="cover" />
           )}
 
           <View style={styles.detailBody}>
-            {/* Título y Botón Corazón (filtrado por usuario en SQLite) */}
+            {/* Título y Botón Corazón */}
             <View style={styles.titleRow}>
               <Text style={[styles.detailTitle, { color: colores.textoPrincipal }]}>
                 {detalleLugar.nombre}
@@ -266,6 +338,22 @@ export default function DetalleLugarPantalla() {
 const styles = StyleSheet.create({
   container: { flex: 1, paddingHorizontal: 16 },
   containerCargando: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  estadoContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 10 },
+  estadoTitulo: { fontSize: 18, fontWeight: '800', textAlign: 'center' },
+  estadoTexto: { fontSize: 14, lineHeight: 20, textAlign: 'center' },
+  botonReintentar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginTop: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+    borderRadius: 8,
+    backgroundColor: '#0284c7',
+  },
+  textoReintentar: { color: '#FFF', fontSize: 14, fontWeight: '700' },
+  botonVolverTexto: { marginTop: 8, padding: 8 },
+  volverTexto: { color: '#0284c7', fontSize: 14, fontWeight: '600' },
   btnVolver: {
     position: 'absolute',
     top: 16,
@@ -281,6 +369,7 @@ const styles = StyleSheet.create({
   titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   detailTitle: { fontSize: 24, fontWeight: 'bold', flex: 1, marginRight: 8 },
   detailAddress: { fontSize: 14, marginBottom: 16 },
+  
   actionRow: { flexDirection: 'row', gap: 8, marginBottom: 16, flexWrap: 'wrap' },
   actionBtn: {
     flexDirection: 'row',
@@ -290,12 +379,14 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   actionBtnText: { color: '#FFF', fontWeight: 'bold', marginLeft: 6, fontSize: 13 },
+
   cardSeccion: {
     padding: 12,
     borderRadius: 12,
     borderWidth: 1,
     marginBottom: 16,
   },
+
   section: { marginTop: 16 },
   sectionTitle: { fontSize: 17, fontWeight: '600', marginBottom: 6 },
   text: { fontSize: 15, lineHeight: 22, marginBottom: 4 },

@@ -24,7 +24,6 @@ import { useTema } from '../contexto/TemaContext';
 import {
   iniciarSesion,
   obtenerToken,
-  guardarToken,
   borrarToken,
   autenticarConBiometria,
   guardarUsuario,
@@ -32,6 +31,7 @@ import {
   Usuario,
 } from '../servicios/autenticacion';
 
+// 📌 Esquema de validación con Zod
 const loginSchema = z.object({
   email: z.string().email('Ingresá un correo electrónico válido'),
   password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
@@ -41,6 +41,7 @@ type LoginFormData = z.infer<typeof loginSchema>;
 
 export default function LoginPantalla() {
   const temaContext = useTema();
+  // Alias de colores seguros para tema claro/oscuro
   const c = (temaContext as any)?.colores || {};
   const esOscuro = (temaContext as any)?.esOscuro || false;
 
@@ -68,55 +69,46 @@ export default function LoginPantalla() {
     verificarSesion();
   }, []);
 
+  // 🔍 Verificar si ya existe una sesión guardada en el dispositivo
   const verificarSesion = async () => {
     try {
       const token = await obtenerToken();
-      let datosUsuario = await obtenerUsuario();
+      const datosUsuario = await obtenerUsuario();
 
-      if (!datosUsuario) {
-        const userRaw = await SecureStore.getItemAsync('usuario_guardado');
-        if (userRaw) datosUsuario = JSON.parse(userRaw);
-      }
-
-      if (token && datosUsuario) {
+      if (token) {
         setHaySesion(true);
-        setUsuario(datosUsuario);
+        setUsuario(datosUsuario || { nombre: 'Turista', email: 'turista@colon.gob.ar' });
       } else {
         setHaySesion(false);
       }
     } catch (error) {
-      console.error('Error verificando sesión:', error);
+      console.warn('Error verificando sesión:', error);
     } finally {
       setCargando(false);
     }
   };
 
-  // 🔑 1. Enviar credenciales a la API real y guardar el token para biometría futura
+  // 🔑 Enviar credenciales a la API real y sugerir activación biométrica
   const onSubmit = async (data: LoginFormData) => {
     setEnviando(true);
     try {
       const emailLimpio = data.email.trim().toLowerCase();
       const resultado = await iniciarSesion(emailLimpio, data.password);
 
-      if (resultado.exito && resultado.datos) {
+      if (resultado.exito) {
+        const usuarioObtenido = resultado.datos?.usuario || (resultado as any).usuario;
+        
         setHaySesion(true);
-        setUsuario(resultado.datos.usuario);
-
-        // 🟢 Guardamos el usuario activo
-        await guardarUsuario(resultado.datos.usuario);
-        await SecureStore.setItemAsync(
-          'usuario_guardado',
-          JSON.stringify(resultado.datos.usuario)
-        );
-
-        // 🟢 Resguardamos el token real de la API para habilitar la biometría posterior
-        const tokenObtenido = await obtenerToken();
-        const tokenReal = resultado.datos.token || tokenObtenido;
-        if (tokenReal) {
-          await SecureStore.setItemAsync('token_guardado', tokenReal);
+        if (usuarioObtenido) {
+          setUsuario(usuarioObtenido);
+          await guardarUsuario(usuarioObtenido);
+          await SecureStore.setItemAsync(
+            'usuario_guardado',
+            JSON.stringify(usuarioObtenido)
+          );
         }
 
-        // 🟢 Verificamos disponibilidad de biometría en el dispositivo
+        // Check availability of hardware for biometrics
         const tieneHardware = await LocalAuthentication.hasHardwareAsync();
         const estaInscripto = await LocalAuthentication.isEnrolledAsync();
 
@@ -130,40 +122,41 @@ export default function LoginPantalla() {
                 style: 'cancel',
                 onPress: async () => {
                   await SecureStore.setItemAsync('biometria_activada', 'false');
-                  router.replace('/perfil');
+                  router.replace('/(tabs)');
                 },
               },
               {
                 text: 'Sí, activar',
                 onPress: async () => {
                   await SecureStore.setItemAsync('biometria_activada', 'true');
-                  router.replace('/perfil');
+                  router.replace('/(tabs)');
                 },
               },
             ]
           );
         } else {
-          router.replace('/perfil');
+          router.replace('/(tabs)');
         }
       } else {
-        Alert.alert('Error', resultado.mensaje || 'Credenciales incorrectas');
+        Alert.alert('Error de ingreso', resultado.mensaje || 'Credenciales incorrectas');
       }
-    } catch (error) {
+    } catch {
       Alert.alert('Error de conexión', 'No se pudo conectar con el servidor.');
     } finally {
       setEnviando(false);
     }
   };
 
-  // 🔐 2. Ingresar con Biometría usando el token REAL y usuario guardados
+  // 🔐 Ingresar con Biometría usando las credenciales/token guardados
   const handleProbarBiometria = async () => {
     try {
       const activada = await SecureStore.getItemAsync('biometria_activada');
       const userRaw = await SecureStore.getItemAsync('usuario_guardado');
-      const tokenGuardado = await SecureStore.getItemAsync('token_guardado');
+      const usuarioContexto = await obtenerUsuario();
 
-      // Validamos que la biometría esté activada y existan el token real y el usuario guardados
-      if (activada !== 'true' || !userRaw || !tokenGuardado) {
+      const usuarioValido = usuarioContexto || (userRaw ? JSON.parse(userRaw) : null);
+
+      if (activada !== 'true' || !usuarioValido) {
         Alert.alert(
           'Atención',
           'Iniciá sesión con correo y contraseña al menos una vez y elegí activar la biometría.'
@@ -171,21 +164,24 @@ export default function LoginPantalla() {
         return;
       }
 
-      const usuarioValido = JSON.parse(userRaw);
-
-      // Solicitamos la autenticación biométrica al sistema operativo del celular
       const exito = await autenticarConBiometria();
-      if (exito) {
-        // 🟢 Restauramos el token REAL devuelto por el servidor en la sesión activa
-        await guardarToken(tokenGuardado);
-        await guardarUsuario(usuarioValido);
+      if (!exito) return;
 
-        setHaySesion(true);
-        setUsuario(usuarioValido);
-        Alert.alert('¡Bienvenido/a!', `Ingreso biométrico exitoso. Hola ${usuarioValido.nombre}`);
-        router.replace('/perfil');
+      const token = await obtenerToken();
+      if (!token) {
+        Alert.alert(
+          'Sesión vencida',
+          'Ingresá con tu correo y contraseña para renovar la sesión.'
+        );
+        return;
       }
+
+      setHaySesion(true);
+      setUsuario(usuarioValido);
+      Alert.alert('¡Bienvenido/a!', `Ingreso biométrico exitoso. Hola ${usuarioValido.nombre}`);
+      router.replace('/(tabs)');
     } catch (error) {
+      console.warn('No se pudo autenticar con biometría:', error);
       Alert.alert('Error', 'No se pudo autenticar con biometría.');
     }
   };
@@ -194,7 +190,7 @@ export default function LoginPantalla() {
     await borrarToken();
     setHaySesion(false);
     setUsuario(null);
-    Alert.alert('Sesión cerrada', 'Has cerrado sesión correctamente');
+    Alert.alert('Sesión cerrada', 'Has cerrado sesión correctamente.');
   };
 
   if (cargando) {
@@ -205,7 +201,7 @@ export default function LoginPantalla() {
     );
   }
 
-  // Vista cuando la sesión SÍ está activa
+  // 👤 Vista cuando la sesión ya está activa
   if (haySesion) {
     return (
       <View style={[styles.container, { backgroundColor: colorFondo }]}>
@@ -227,9 +223,9 @@ export default function LoginPantalla() {
 
         <Pressable
           style={[styles.botonIngresar, { backgroundColor: colorPrimario }]}
-          onPress={() => router.replace('/perfil')}
+          onPress={() => router.replace('/(tabs)')}
         >
-          <Text style={styles.botonTexto}>Ir a Mi Perfil y Configuración</Text>
+          <Text style={styles.botonTexto}>Ir a la Aplicación</Text>
         </Pressable>
 
         <Pressable style={styles.botonCerrar} onPress={handleCerrarSesion}>
@@ -239,7 +235,7 @@ export default function LoginPantalla() {
     );
   }
 
-  // Formulario de ingreso cuando NO hay sesión
+  // 📝 Formulario de ingreso cuando NO hay sesión
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -270,13 +266,14 @@ export default function LoginPantalla() {
                   color: colorTextoPrincipal,
                 },
               ]}
-              placeholder="nombre@mail.com"
+              placeholder="lucia@mail.com"
               placeholderTextColor={colorTextoSecundario}
               onBlur={onBlur}
               onChangeText={onChange}
               value={value}
               keyboardType="email-address"
               autoCapitalize="none"
+              autoCorrect={false}
             />
           )}
         />
@@ -301,7 +298,7 @@ export default function LoginPantalla() {
                   color: colorTextoPrincipal,
                 },
               ]}
-              placeholder="******"
+              placeholder="••••••••"
               placeholderTextColor={colorTextoSecundario}
               secureTextEntry
               onBlur={onBlur}

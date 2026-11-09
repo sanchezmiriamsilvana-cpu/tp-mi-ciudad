@@ -1,48 +1,34 @@
 import * as SQLite from 'expo-sqlite';
-import { api } from './api'; 
+import { api } from './api';
 import { Visita, RegistrarVisitaDTO } from '../tipos/visitas';
 
 const NOMBRE_DB = 'miciudad.db';
-let dbInstance: SQLite.SQLiteDatabase | null = null;
 
-// Reutilización de la conexión a la base de datos local SQLite
-async function obtenerDB(): Promise<SQLite.SQLiteDatabase> {
-  if (!dbInstance) {
-    dbInstance = await SQLite.openDatabaseAsync(NOMBRE_DB);
-    await dbInstance.execAsync(`
-      CREATE TABLE IF NOT EXISTS visitas (
-        id TEXT PRIMARY KEY NOT NULL,
-        usuarioId TEXT,
-        lugarId TEXT NOT NULL,
-        fechaHora TEXT NOT NULL,
-        origen TEXT NOT NULL,
-        fotoUri TEXT,
-        nota TEXT,
-        sincronizada INTEGER NOT NULL DEFAULT 0
-      );
-    `);
-  }
-  return dbInstance;
+// Inicialización de la base de datos SQLite local
+async function obtenerDB() {
+  const db = await SQLite.openDatabaseAsync(NOMBRE_DB);
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS visitas (
+      id TEXT PRIMARY KEY NOT NULL,
+      usuarioId TEXT,
+      lugarId TEXT NOT NULL,
+      fechaHora TEXT NOT NULL,
+      origen TEXT NOT NULL,
+      fotoUri TEXT,
+      nota TEXT,
+      sincronizada INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  return db;
 }
 
 /**
- * 1. Obtener las visitas almacenadas en SQLite filtradas por el usuario activo
+ * 1. Obtener todas las visitas almacenadas localmente en el teléfono (SQLite)
  */
-export async function obtenerVisitasLocales(usuarioId?: string): Promise<Visita[]> {
+export async function obtenerVisitasLocales(): Promise<Visita[]> {
   try {
     const db = await obtenerDB();
-    let filas: any[] = [];
-
-    if (usuarioId && usuarioId.trim() !== '') {
-      filas = await db.getAllAsync<any>(
-        'SELECT * FROM visitas WHERE usuarioId = ? ORDER BY fechaHora DESC;',
-        [usuarioId]
-      );
-    } else {
-      filas = await db.getAllAsync<any>(
-        'SELECT * FROM visitas WHERE usuarioId IS NULL OR usuarioId = "" OR usuarioId = "usuario_invitado" ORDER BY fechaHora DESC;'
-      );
-    }
+    const filas = await db.getAllAsync<any>('SELECT * FROM visitas ORDER BY fechaHora DESC;');
     
     return filas.map((row) => ({
       id: row.id,
@@ -55,7 +41,7 @@ export async function obtenerVisitasLocales(usuarioId?: string): Promise<Visita[
       sincronizada: row.sincronizada === 1,
     }));
   } catch (error) {
-    console.error('Error al obtener visitas locales:', error);
+    console.warn('Error al obtener visitas locales:', error);
     return [];
   }
 }
@@ -81,7 +67,7 @@ export async function guardarVisitaLocal(visita: Visita): Promise<void> {
       ]
     );
   } catch (error) {
-    console.error('Error al guardar visita local:', error);
+    console.warn('Error al guardar visita local:', error);
   }
 }
 
@@ -95,27 +81,23 @@ export async function actualizarVisitaLocal(
   try {
     const db = await obtenerDB();
     await db.runAsync(
-      `UPDATE visitas SET nota = ?, fotoUri = ? WHERE id = ?;`,
-      [datos.nota ?? null, datos.fotoUri ?? null, id]
+      `UPDATE visitas SET nota = COALESCE(?, nota), fotoUri = COALESCE(?, fotoUri) WHERE id = ?;`,
+      [datos.nota || null, datos.fotoUri || null, id]
     );
   } catch (error) {
-    console.error('Error al actualizar visita local:', error);
+    console.warn('Error al actualizar visita local:', error);
   }
 }
 
 /**
- * 4. Registrar la visita en el backend/API NestJS (POST /yo/visitas)
+ * 4. Registrar la visita en el backend/API
  */
 export async function registrarVisitaAPI(datos: RegistrarVisitaDTO): Promise<boolean> {
   try {
     const respuesta = await api.post('/yo/visitas', datos);
     return respuesta.status === 200 || respuesta.status === 201;
-  } catch (error: any) {
-    console.warn(
-      '⚠️ Error API Visita:',
-      error.response?.status,
-      error.response?.data || error.message
-    );
+  } catch (error) {
+    console.warn('API no disponible. La visita quedó guardada únicamente de forma local:', error);
     return false;
   }
 }
@@ -130,8 +112,8 @@ export async function actualizarVisitaAPI(
   try {
     const respuesta = await api.patch(`/yo/visitas/${id}`, datos);
     return respuesta.status === 200;
-  } catch (error: any) {
-    console.warn('⚠️ No se pudo sincronizar nota/foto en API:', error.response?.status || error.message);
+  } catch (error) {
+    console.warn('No se pudo sincronizar la nota/foto con el servidor:', error);
     return false;
   }
 }
@@ -150,7 +132,6 @@ export async function sincronizarVisitasPendientes(): Promise<void> {
       const datosDTO: RegistrarVisitaDTO = {
         lugarId: item.lugarId,
         origen: item.origen,
-        fechaHora: item.fechaHora, 
         fotoUri: item.fotoUri || undefined,
         nota: item.nota || undefined,
       };
@@ -161,6 +142,6 @@ export async function sincronizarVisitasPendientes(): Promise<void> {
       }
     }
   } catch (error) {
-    console.error('Error al sincronizar visitas pendientes:', error);
+    console.warn('Error al sincronizar visitas pendientes:', error);
   }
 }

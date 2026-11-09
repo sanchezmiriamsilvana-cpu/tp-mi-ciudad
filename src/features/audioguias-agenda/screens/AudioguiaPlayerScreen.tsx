@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useTema } from '../../../contexto/TemaContext';
-import { AUDIOGUIAS } from '../data/audioguias';
+import { etiquetaTipo } from '../data/audioguias';
 import { useAudioguia } from '../hooks/useAudioguia';
 import { useAudioguias } from '../hooks/useAudioguias';
 
@@ -19,33 +19,47 @@ const velocidades = [1, 1.25, 1.5, 1.75, 2];
 export default function AudioguiaPlayerScreen() {
   const { colores } = useTema();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const guia = AUDIOGUIAS.find((item) => item.id === id);
   const audio = useAudioguia();
   const catalogo = useAudioguias();
+  const { obtenerFuente } = catalogo;
+  const guia = catalogo.buscarGuia(id);
   const [anchoBarra, setAnchoBarra] = useState(0);
   const [descargando, setDescargando] = useState(false);
-  const [fuenteResuelta, setFuenteResuelta] = useState<Awaited<ReturnType<typeof catalogo.obtenerFuente>>>(null);
+  const [fuenteResuelta, setFuenteResuelta] = useState<Awaited<ReturnType<typeof obtenerFuente>>>(null);
   const activa = Boolean(guia && audio.guiaActiva?.id === guia.id);
   const descargada = Boolean(guia && catalogo.audiosLocales[guia.id]);
-  const incluida = Boolean(guia && catalogo.guiasIncluidas.includes(guia.id));
   const fuente = guia ? fuenteResuelta : null;
   const avance = activa && audio.estado.duration > 0 ? audio.estado.currentTime / audio.estado.duration : 0;
 
   React.useEffect(() => {
     if (!guia) return;
     let vigente = true;
-    void catalogo.obtenerFuente(guia).then((resultado) => {
+    setFuenteResuelta(null);
+    void obtenerFuente(guia).then((resultado) => {
       if (vigente) setFuenteResuelta(resultado);
     });
     return () => {
       vigente = false;
     };
-  }, [guia, descargada]);
+  }, [guia, descargada, obtenerFuente]);
+
+  if (!guia && catalogo.cargando) {
+    return (
+      <SafeAreaView style={[styles.container, styles.centrado, { backgroundColor: colores.fondo }]}>
+        <ActivityIndicator size="large" color="#0284c7" />
+        <Text style={[styles.mensaje, { color: colores.textoSecundario }]}>Cargando audioguía…</Text>
+      </SafeAreaView>
+    );
+  }
 
   if (!guia) {
     return (
       <SafeAreaView style={[styles.container, styles.centrado, { backgroundColor: colores.fondo }]}>
-        <Text style={{ color: colores.textoPrincipal }}>No se encontró esta audioguía.</Text>
+        <Ionicons name="alert-circle-outline" size={40} color={colores.textoSecundario} />
+        <Text style={[styles.mensaje, { color: colores.textoPrincipal }]}>No se encontró esta audioguía.</Text>
+        <TouchableOpacity style={styles.botonVolverLista} onPress={() => router.replace('/audioguias-modulo')}>
+          <Text style={styles.textoBotonVolver}>Volver al catálogo</Text>
+        </TouchableOpacity>
       </SafeAreaView>
     );
   }
@@ -77,10 +91,21 @@ export default function AudioguiaPlayerScreen() {
         </View>
 
         <View style={styles.contenido}>
-          <View style={styles.portada}>
-            <Ionicons name="headset-outline" size={58} color="#0284c7" />
+          <View style={[styles.portada, { backgroundColor: colores.tarjetaFondo, borderColor: colores.tarjetaBorde }]}>
+            {guia.imagen ? (
+              <Image source={{ uri: guia.imagen }} style={styles.portadaImagen} resizeMode="cover" />
+            ) : (
+              <Ionicons name="headset-outline" size={58} color="#0284c7" />
+            )}
+          </View>
+
+          <View style={[styles.etiqueta, { backgroundColor: colores.tarjetaBorde }]}>
+            <Text style={[styles.textoEtiqueta, { color: colores.textoSecundario }]}>{etiquetaTipo(guia.tipo)}</Text>
           </View>
           <Text style={[styles.titulo, { color: colores.textoPrincipal }]}>{guia.titulo}</Text>
+          {guia.autor ? (
+            <Text style={[styles.autor, { color: colores.textoSecundario }]}>Narrado por {guia.autor}</Text>
+          ) : null}
           <Text style={[styles.descripcion, { color: colores.textoSecundario }]}>{guia.descripcion}</Text>
 
           <View style={styles.controlesReproductor}>
@@ -148,9 +173,6 @@ export default function AudioguiaPlayerScreen() {
             <Text style={[styles.textoVelocidad, { color: colores.textoPrincipal }]}>{audio.velocidad}×</Text>
           </TouchableOpacity>
 
-          {incluida && !descargada && (
-            <Text style={[styles.origen, { color: colores.textoSecundario }]}>Versión de demostración incluida en la app.</Text>
-          )}
           {!descargada && guia.audioUrl && (
             <TouchableOpacity disabled={descargando} onPress={() => void manejarDescarga()} style={styles.botonDescarga}>
               {descargando ? <ActivityIndicator size="small" color="#0284c7" /> : <Ionicons name="download-outline" size={18} color="#0284c7" />}
@@ -159,6 +181,7 @@ export default function AudioguiaPlayerScreen() {
               </Text>
             </TouchableOpacity>
           )}
+          {catalogo.errorCatalogo && <Text accessibilityRole="alert" style={styles.error}>{catalogo.errorCatalogo}</Text>}
           {catalogo.error && <Text accessibilityRole="alert" style={styles.error}>{catalogo.error}</Text>}
           {audio.errorAudio && <Text accessibilityRole="alert" style={styles.error}>{audio.errorAudio}</Text>}
         </View>
@@ -169,15 +192,32 @@ export default function AudioguiaPlayerScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  centrado: { alignItems: 'center', justifyContent: 'center' },
+  centrado: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
+  mensaje: { marginTop: 12, fontSize: 14, textAlign: 'center' },
+  botonVolverLista: { marginTop: 20, backgroundColor: '#0284c7', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 6 },
+  textoBotonVolver: { color: '#fff', fontWeight: '700', fontSize: 13 },
   encabezado: { height: 52, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 8 },
   volver: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   textoEncabezado: { fontSize: 16, fontWeight: '700' },
-  contenido: { flex: 1, alignItems: 'center', paddingHorizontal: 28, paddingTop: 26 },
-  portada: { width: 220, aspectRatio: 1, maxWidth: '75%', borderRadius: 8, backgroundColor: '#e7f4fa', alignItems: 'center', justifyContent: 'center', marginBottom: 28 },
+  contenido: { flex: 1, alignItems: 'center', paddingHorizontal: 28, paddingTop: 20, paddingBottom: 28 },
+  portada: {
+    width: 200,
+    aspectRatio: 1,
+    maxWidth: '70%',
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 18,
+    overflow: 'hidden',
+  },
+  portadaImagen: { width: '100%', height: '100%' },
+  etiqueta: { borderRadius: 4, paddingHorizontal: 7, paddingVertical: 3, marginBottom: 8 },
+  textoEtiqueta: { fontSize: 10, fontWeight: '800', textTransform: 'uppercase' },
   titulo: { fontSize: 22, fontWeight: '800', textAlign: 'center' },
+  autor: { fontSize: 12, fontStyle: 'italic', marginTop: 4 },
   descripcion: { fontSize: 13, textAlign: 'center', lineHeight: 19, marginTop: 8 },
-  controlesReproductor: { width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 34, marginTop: 28 },
+  controlesReproductor: { width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 34, marginTop: 24 },
   botonSalto: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
   segundos: { position: 'absolute', fontSize: 8, fontWeight: '800', top: 23 },
   botonPrincipal: { width: 58, height: 58, borderRadius: 29, backgroundColor: '#0284c7', alignItems: 'center', justifyContent: 'center', paddingLeft: 3 },
@@ -186,10 +226,10 @@ const styles = StyleSheet.create({
   avance: { height: 4, borderRadius: 2, backgroundColor: '#0284c7' },
   tiempos: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 5 },
   tiempo: { fontSize: 11, fontVariant: ['tabular-nums'] },
-  botonVelocidad: { minWidth: 52, height: 36, borderWidth: 1, borderRadius: 6, alignItems: 'center', justifyContent: 'center', marginTop: 22 },
+  botonVelocidad: { minWidth: 52, height: 36, borderWidth: 1, borderRadius: 6, alignItems: 'center', justifyContent: 'center', marginTop: 20 },
   textoVelocidad: { fontSize: 12, fontWeight: '700' },
-  botonDescarga: { minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 22, paddingHorizontal: 8 },
+  botonDescarga: { minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 18, paddingHorizontal: 8 },
   textoDescarga: { fontSize: 12, fontWeight: '700' },
-  origen: { fontSize: 12, marginTop: 18, textAlign: 'center' },
+  origen: { fontSize: 12, marginTop: 16, textAlign: 'center' },
   error: { color: '#b91c1c', fontSize: 12, marginTop: 10, textAlign: 'center' },
 });

@@ -1,20 +1,21 @@
-import axios from 'axios';
-import { obtenerToken } from './autenticacion';
+import { create } from 'axios';
+import { obtenerToken } from './sesion';
+import { API_TIMEOUT_MS, BASE_URL } from '../config/env';
 
-// 1. URL base desde variables de entorno con fallback a tu IP local
-export const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.40:3000';
+// Reexporta la URL validada para no romper importaciones existentes.
+export { BASE_URL };
 
-// 2. Instancia centralizada de Axios
-export const api = axios.create({
+// 1. Instancia centralizada de Axios
+export const api = create({
   baseURL: BASE_URL,
-  timeout: 10000,
+  timeout: API_TIMEOUT_MS,
   headers: {
     'Content-Type': 'application/json',
-    'bypass-tunnel-reminder': 'true', 
+    'bypass-tunnel-reminder': 'true',
   },
 });
 
-// 3. Interceptor con logs de depuración
+// 2. Interceptor con logs de depuración
 api.interceptors.request.use(
   async (config) => {
     console.log(`🌐 [Axios Request] ${config.method?.toUpperCase()} -> ${config.baseURL}${config.url}`);
@@ -26,13 +27,13 @@ api.interceptors.request.use(
         console.log('🔑 [Axios] Token adjuntado con éxito');
       }
     } catch (err) {
-      console.error('⚠️ [Axios Error Token] Error al obtener el token:', err);
+      console.warn('⚠️ [Axios Error Token] Error al obtener el token:', err);
     }
     
     return config;
   },
   (error) => {
-    console.error('❌ [Axios Request Error]', error);
+    console.warn('❌ [Axios Request Error]', error);
     return Promise.reject(error);
   }
 );
