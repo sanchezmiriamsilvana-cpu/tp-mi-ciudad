@@ -38,7 +38,7 @@ export async function obtenerUbicacionActual(): Promise<Coordenadas | null> {
       longitud: pos.coords.longitude,
     };
   } catch (error) {
-    console.error('Error al obtener coordenadas GPS:', error);
+    console.warn('Error al obtener coordenadas GPS:', error);
     return null;
   }
 }
@@ -81,7 +81,7 @@ export function abrirMapaNativo(lat: number, lng: number, nombreLugar: string) {
 
   if (url) {
     Linking.openURL(url).catch((err) =>
-      console.error('Error al abrir la app de mapas:', err)
+      console.warn('Error al abrir la app de mapas:', err)
     );
   }
 }

@@ -3,7 +3,9 @@ import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'rea
 import { Ionicons } from '@expo/vector-icons';
 
 import { useTema } from '../../../contexto/TemaContext';
-import { EventoAgenda } from '../data/eventos';
+import type { EstadoEvento } from '../../../tipos/eventos';
+import { etiquetaEstado, textoPrecio } from '../data/eventos';
+import type { EventoAgenda } from '../data/eventos';
 
 interface PropsEventoCard {
   evento: EventoAgenda;
@@ -24,6 +26,13 @@ const fechaCompleta = new Intl.DateTimeFormat('es-AR', {
   day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
 });
 
+const COLORES_ESTADO: Record<EstadoEvento, { fondo: string; texto: string }> = {
+  programado: { fondo: '#e7f4fa', texto: '#0369a1' },
+  suspendido: { fondo: '#fff5e8', texto: '#835116' },
+  cancelado: { fondo: '#fdecea', texto: '#9f2e2e' },
+  finalizado: { fondo: '#eef0f2', texto: '#54606a' },
+};
+
 export default function EventoCard({
   evento,
   recordatorioActivo,
@@ -35,6 +44,10 @@ export default function EventoCard({
 }: PropsEventoCard) {
   const { colores } = useTema();
   const fecha = new Date(evento.fecha);
+  const fechaValida = !Number.isNaN(fecha.getTime());
+  const estado = etiquetaEstado(evento.estado);
+  const precio = textoPrecio(evento.precio);
+  const colorEstado = evento.estado ? COLORES_ESTADO[evento.estado] : null;
 
   return (
     <View style={[styles.tarjeta, { backgroundColor: colores.tarjetaFondo, borderColor: colores.tarjetaBorde }]}>
@@ -44,10 +57,28 @@ export default function EventoCard({
         </View>
         <View style={styles.textos}>
           <Text style={[styles.titulo, { color: colores.textoPrincipal }]}>{evento.titulo}</Text>
-          <Text style={[styles.fecha, { color: '#0284c7' }]}>{fechaCompleta.format(fecha)}</Text>
+          <Text style={[styles.fecha, { color: '#0284c7' }]}>
+            {fechaValida ? fechaCompleta.format(fecha) : 'Fecha a confirmar'}
+          </Text>
           <Text style={[styles.lugar, { color: colores.textoPrincipal }]}>{evento.lugar}</Text>
           <Text style={[styles.direccion, { color: colores.textoSecundario }]}>{evento.direccion}</Text>
-          <Text style={[styles.descripcion, { color: colores.textoSecundario }]}>{evento.descripcion}</Text>
+          {(estado || precio) && (
+            <View style={styles.etiquetas}>
+              {estado && colorEstado && (
+                <View style={[styles.etiqueta, { backgroundColor: colorEstado.fondo }]}>
+                  <Text style={[styles.textoEtiqueta, { color: colorEstado.texto }]}>{estado}</Text>
+                </View>
+              )}
+              {precio && (
+                <View style={[styles.etiqueta, { backgroundColor: '#eef7ee' }]}>
+                  <Text style={[styles.textoEtiqueta, { color: '#2f6b3a' }]}>{precio}</Text>
+                </View>
+              )}
+            </View>
+          )}
+          {evento.descripcion !== '' && (
+            <Text style={[styles.descripcion, { color: colores.textoSecundario }]}>{evento.descripcion}</Text>
+          )}
         </View>
         <Ionicons name="chevron-forward" size={18} color={colores.textoSecundario} />
       </TouchableOpacity>
@@ -102,6 +133,9 @@ const styles = StyleSheet.create({
   fecha: { fontSize: 12, fontWeight: '700', marginTop: 6 },
   lugar: { fontSize: 12, fontWeight: '700', marginTop: 7 },
   direccion: { fontSize: 11, marginTop: 2 },
+  etiquetas: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  etiqueta: { borderRadius: 4, paddingHorizontal: 7, paddingVertical: 2 },
+  textoEtiqueta: { fontSize: 10, fontWeight: '700' },
   descripcion: { fontSize: 12, lineHeight: 18, marginTop: 8 },
   pie: { minHeight: 50, borderTopWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, paddingHorizontal: 14, paddingVertical: 8 },
   selector: { flexDirection: 'row', padding: 2, borderRadius: 6, backgroundColor: '#edf2f4', gap: 2 },

@@ -1,17 +1,21 @@
-import * as SecureStore from 'expo-secure-store';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { Alert } from 'react-native';
-import { BASE_URL } from './api';
+import { isAxiosError } from 'axios';
 
-const TOKEN_KEY = 'user_session_token';
-const USUARIO_KEY = 'user_profile_data';
+import { api } from './api';
+import { mensajeDeErrorApi } from './errores';
+import {
+  borrarToken,
+  guardarToken,
+  guardarUsuario,
+  obtenerToken,
+  obtenerUsuario,
+  type Usuario,
+} from './sesion';
 
-export interface Usuario {
-  id?: string;
-  nombre: string;
-  email: string;
-  password?: string;
-}
+// Se reexportan para no romper las importaciones que ya apuntan a este módulo.
+export { borrarToken, guardarToken, guardarUsuario, obtenerToken, obtenerUsuario };
+export type { Usuario };
 
 export interface RespuestaAuth {
   exito: boolean;
@@ -20,32 +24,6 @@ export interface RespuestaAuth {
     usuario: Usuario;
   };
   mensaje?: string;
-}
-
-// ==========================================
-// 1. SECURE STORE (Persistencia de Sesión)
-// ==========================================
-
-export async function guardarToken(token: string): Promise<void> {
-  await SecureStore.setItemAsync(TOKEN_KEY, token);
-}
-
-export async function obtenerToken(): Promise<string | null> {
-  return await SecureStore.getItemAsync(TOKEN_KEY);
-}
-
-export async function guardarUsuario(usuario: Usuario): Promise<void> {
-  await SecureStore.setItemAsync(USUARIO_KEY, JSON.stringify(usuario));
-}
-
-export async function obtenerUsuario(): Promise<Usuario | null> {
-  const data = await SecureStore.getItemAsync(USUARIO_KEY);
-  return data ? JSON.parse(data) : null;
-}
-
-export async function borrarToken(): Promise<void> {
-  await SecureStore.deleteItemAsync(TOKEN_KEY);
-  await SecureStore.deleteItemAsync(USUARIO_KEY);
 }
 
 // ==========================================
@@ -80,7 +58,7 @@ export async function autenticarConBiometria(): Promise<boolean> {
 
     return resultado.success;
   } catch (error) {
-    console.error('Error en autenticación biométrica:', error);
+    console.warn('Error en autenticación biométrica:', error);
     return false;
   }
 }
@@ -89,33 +67,56 @@ export async function autenticarConBiometria(): Promise<boolean> {
 // 3. PETICIONES A LA API REAL
 // ==========================================
 
+interface RespuestaApiAuth {
+  datos?: { token?: string; usuario?: Usuario };
+  data?: { token?: string; usuario?: Usuario };
+  token?: string;
+  usuario?: Usuario;
+  mensaje?: string;
+  error?: { mensaje?: string };
+}
+
+function extraerSesion(payload: unknown): { token: string; usuario: Usuario } | null {
+  if (!payload || typeof payload !== 'object') return null;
+
+  const registro = payload as RespuestaApiAuth;
+  const contenedor = registro.datos ?? registro.data ?? registro;
+  const token = contenedor.token;
+  const usuario = contenedor.usuario;
+
+  return token && usuario ? { token, usuario } : null;
+}
+
+function mensajeRespuestaAuth(error: unknown, porDefecto: string): string {
+  if (isAxiosError(error) && error.response) {
+    const data = error.response.data as RespuestaApiAuth | undefined;
+    return data?.error?.mensaje ?? data?.mensaje ?? porDefecto;
+  }
+  return mensajeDeErrorApi(error, 'la sesión');
+}
+
 // Iniciar Sesión
 export async function iniciarSesion(email: string, password: string): Promise<RespuestaAuth> {
   try {
-    const respuesta = await fetch(`${BASE_URL}/auth/ingreso`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        email: email.trim().toLowerCase(), 
-        contrasena: password 
-      }),
+    const respuesta = await api.post('/auth/ingreso', {
+      email: email.trim().toLowerCase(),
+      contrasena: password,
     });
 
-    const json = await respuesta.json();
-
-    if (!respuesta.ok) {
-      const mensajeError = json.error?.mensaje || json.mensaje || 'Credenciales incorrectas';
-      return { exito: false, mensaje: mensajeError };
+    const sesion = extraerSesion(respuesta.data);
+    if (!sesion) {
+      return { exito: false, mensaje: 'El servidor devolvió una respuesta inválida.' };
     }
 
-    const { token, usuario } = json.datos;
+    await guardarToken(sesion.token);
+    await guardarUsuario(sesion.usuario);
 
-    await guardarToken(token);
-    await guardarUsuario(usuario);
-
-    return { exito: true, datos: { token, usuario } };
-  } catch (error: any) {
-    return { exito: false, mensaje: 'No se pudo conectar con el servidor.' };
+    return { exito: true, datos: sesion };
+  } catch (error) {
+    return {
+      exito: false,
+      mensaje: mensajeRespuestaAuth(error, 'Credenciales incorrectas'),
+    };
   }
 }
 
@@ -126,30 +127,25 @@ export async function registrarUsuario(
   password: string
 ): Promise<RespuestaAuth> {
   try {
-    const respuesta = await fetch(`${BASE_URL}/auth/registro`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        nombre: nombre.trim(),
-        email: email.trim().toLowerCase(),
-        contrasena: password,
-      }),
+    const respuesta = await api.post('/auth/registro', {
+      nombre: nombre.trim(),
+      email: email.trim().toLowerCase(),
+      contrasena: password,
     });
 
-    const json = await respuesta.json();
-
-    if (!respuesta.ok) {
-      const mensajeError = json.error?.mensaje || json.mensaje || 'Error al registrar usuario';
-      return { exito: false, mensaje: mensajeError };
+    const sesion = extraerSesion(respuesta.data);
+    if (!sesion) {
+      return { exito: false, mensaje: 'El servidor devolvió una respuesta inválida.' };
     }
 
-    const { token, usuario } = json.datos;
+    await guardarToken(sesion.token);
+    await guardarUsuario(sesion.usuario);
 
-    await guardarToken(token);
-    await guardarUsuario(usuario);
-
-    return { exito: true, datos: { token, usuario } };
-  } catch (error: any) {
-    return { exito: false, mensaje: 'No se pudo conectar con el servidor.' };
+    return { exito: true, datos: sesion };
+  } catch (error) {
+    return {
+      exito: false,
+      mensaje: mensajeRespuestaAuth(error, 'Error al registrar usuario'),
+    };
   }
 }

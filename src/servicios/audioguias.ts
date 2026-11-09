@@ -7,63 +7,6 @@ export interface Audioguia {
   descripcion: string;
 }
 
-export const AUDIOGUIAS: Audioguia[] = [
-  {
-    id: 'molino-forclaz',
-    lugarId: 'lug-004',
-    titulo: 'Molino Forclaz',
-    descripcion: 'Historia de la inmigración suiza en Colón.',
-  },
-  {
-    id: 'complejo-termal',
-    lugarId: 'lug-001',
-    titulo: 'Complejo Termal Colón',
-    descripcion: 'Un recorrido por el parque termal.',
-  },
-  {
-    id: 'parque-el-palmar',
-    lugarId: 'lug-002',
-    titulo: 'Parque Nacional El Palmar',
-    descripcion: 'Senderos y palmares de Yatay.',
-  },
-  {
-    id: 'puerto-viejo',
-    lugarId: 'lug-003',
-    titulo: 'Puerto Viejo',
-    descripcion: 'El antiguo puerto y la vida junto al río.',
-  },
-  {
-    id: 'playa-norte',
-    lugarId: 'lug-005',
-    titulo: 'Playa Norte',
-    descripcion: 'La costa del río Uruguay.',
-  },
-  {
-    id: 'bodega-vulliez-sermet',
-    lugarId: 'lug-006',
-    titulo: 'Bodega Vulliez Sermet',
-    descripcion: 'Viñedos y tradición vitivinícola.',
-  },
-  {
-    id: 'parque-quiros',
-    lugarId: 'lug-007',
-    titulo: 'Parque Quirós',
-    descripcion: 'Un paseo por el parque de la ciudad.',
-  },
-  {
-    id: 'basilica-colon',
-    lugarId: 'lug-008',
-    titulo: 'Basílica Santos Justo y Pastor',
-    descripcion: 'Patrimonio religioso e historia local.',
-  },
-  {
-    id: 'costanera-colon',
-    lugarId: 'lug-009',
-    titulo: 'Costanera de Colón',
-    descripcion: 'El paseo ribereño y sus paisajes.',
-  },
-];
-
 function obtenerCarpetaAudioguias(): Directory {
   return new Directory(Paths.document, 'audioguias');
 }

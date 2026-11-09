@@ -1,4 +1,3 @@
-import * as SQLite from 'expo-sqlite';
 import { obtenerConexionDB } from '../servicios/db';
 
 export interface PreferenciasUsuario {
@@ -51,7 +50,7 @@ export async function obtenerPreferencias(): Promise<PreferenciasUsuario> {
       radioAvisoMetros: resultado.radioAvisoMetros,
     };
   } catch (error) {
-    console.error('Error al obtener preferencias:', error);
+    console.warn('Error al obtener preferencias:', error);
     return PREFERENCIAS_DEFAULT;
   }
 }
@@ -75,6 +74,6 @@ export async function guardarPreferencias(
       [prefs.tema, catsJson, prefs.avisarProximidad ? 1 : 0, prefs.radioAvisoMetros]
     );
   } catch (error) {
-    console.error('Error al guardar preferencias:', error);
+    console.warn('Error al guardar preferencias:', error);
   }
 }

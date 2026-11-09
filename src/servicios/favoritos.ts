@@ -25,7 +25,7 @@ export async function obtenerFavoritosPorUsuario(usuarioId?: string | null): Pro
     );
     return resultado || [];
   } catch (error) {
-    console.error('Error al obtener favoritos:', error);
+    console.warn('Error al obtener favoritos:', error);
     return [];
   }
 }
@@ -66,7 +66,7 @@ export async function alternarFavorito(lugarId: string, usuarioId?: string | nul
       return true;
     }
   } catch (error) {
-    console.error('Error al alternar favorito:', error);
+    console.warn('Error al alternar favorito:', error);
     return false;
   }
 }

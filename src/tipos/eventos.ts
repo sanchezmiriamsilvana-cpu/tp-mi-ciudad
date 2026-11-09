@@ -7,6 +7,8 @@ export interface Evento {
   titulo: string;
   descripcion: string;
   lugarId: string | null;
+  /** Nombre del lugar para mostrar, resuelto a partir de `lugar` o `lugarNombre`. */
+  lugarNombre?: string | null;
   direccionLibre: string | null;
   coordenadas: Coordenadas | null;
   inicio: string; // Formato ISO 8601

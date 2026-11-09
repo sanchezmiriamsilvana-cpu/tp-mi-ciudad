@@ -15,6 +15,13 @@ export interface Categoria {
   icono: string;
 }
 
+/** Audioguía del lugar tal como la devuelve la API (`Lugar.audioguia`). */
+export interface Audioguia {
+  url: string;
+  duracionSegundos: number;
+  idioma: 'es' | 'en' | 'pt';
+}
+
 export interface Lugar {
   id: string;
   nombre: string;
@@ -23,11 +30,14 @@ export interface Lugar {
   descripcion: string;
   direccion: string;
   coordenadas: Coordenadas;
-  imagenes: string;
+  imagenes: string[];
   precioEntrada: number | null; // 0 = Gratis, null = No especificado
   horarios: Horario[];
   accesible: boolean;
   telefono: string | null;
-  sitioWeb?: string;
-  audioguia: string | null;
+  sitioWeb: string | null;
+  audioguia: Audioguia | null;
+  codigoQr: string | null;
+  activo: boolean;
+  actualizadoEn: string;
 }

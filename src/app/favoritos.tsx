@@ -14,14 +14,14 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Lugar } from '../tipos/lugares';
 import { obtenerLugares } from '../servicios/lugares';
+import { mensajeDeErrorApi } from '../servicios/errores';
 import { obtenerFavoritosIds, alternarFavorito } from '../servicios/favoritos';
 import { useTema } from '../contexto/TemaContext';
 import { BASE_URL } from '../servicios/api';
-import { obtenerUsuario } from '../servicios/autenticacion';
 
 const IMAGEN_DEFAULT = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSYwl49SBaAWa5x5iCzdte_NsHghIRZiSWyphHOVNp6aw&s';
 
-//  Procesamiento de imágenes 
+// 🟢 Helper seguro: procesa cualquier formato de imagen y reemplaza URLs locales por la BASE_URL activa
 const obtenerImagenSegura = (imagenes: any): string => {
   if (!imagenes) return IMAGEN_DEFAULT;
 
@@ -31,7 +31,7 @@ const obtenerImagenSegura = (imagenes: any): string => {
   if (typeof url === 'string' && url.trim().startsWith('[')) {
     try {
       url = JSON.parse(url);
-    } catch (e) {
+    } catch {
       // Ignorar si no es un JSON válido
     }
   }
@@ -80,49 +80,52 @@ export default function FavoritosPantalla() {
 
   const [lugaresFavoritos, setLugaresFavoritos] = useState<Lugar[]>([]);
   const [cargando, setCargando] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const cargarFavoritos = useCallback(async () => {
+    setCargando(true);
+    setError(null);
+
+    try {
+      const favIds = await obtenerFavoritosIds();
+
+      if (!favIds || favIds.length === 0) {
+        setLugaresFavoritos([]);
+        return;
+      }
+
+      const res = await obtenerLugares();
+      if (!res.exito) {
+        setLugaresFavoritos([]);
+        setError(res.mensaje ?? 'No se pudieron cargar los lugares favoritos.');
+        return;
+      }
+
+      const lista = Array.isArray(res.datos) ? res.datos : [];
+      setLugaresFavoritos(lista.filter((lugar) => favIds.includes(lugar.id)));
+    } catch (fallo) {
+      const mensaje = mensajeDeErrorApi(fallo, 'los favoritos');
+      console.warn(`[API] ${mensaje}`);
+      setLugaresFavoritos([]);
+      setError(mensaje);
+    } finally {
+      setCargando(false);
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
-      async function cargarFavoritos() {
-        setCargando(true);
-        try {
-          // 🟢 Lectura del usuario activo
-          const usuario = await obtenerUsuario();
-          const usuarioId = usuario?.email || usuario?.id || usuario?.nombre || 'usuario_invitado';
-
-          const favIds = await obtenerFavoritosIds(usuarioId);
-
-          if (!favIds || favIds.length === 0) {
-            setLugaresFavoritos([]);
-          } else {
-            const res = await obtenerLugares();
-            const lista: Lugar[] = res.datos || res || [];
-            const filtrados = lista.filter((lugar) => favIds.includes(lugar.id));
-            setLugaresFavoritos(filtrados);
-          }
-        } catch (error) {
-          console.error('Error al cargar la lista de favoritos:', error);
-          setLugaresFavoritos([]);
-        } finally {
-          setCargando(false);
-        }
-      }
-
-      cargarFavoritos();
-    }, [])
+      void cargarFavoritos();
+    }, [cargarFavoritos])
   );
 
   const handleQuitarFavorito = async (lugarId: string) => {
     try {
-      // 🟢 Eliminación de favorito vinculada a la cuenta activa
-      const usuario = await obtenerUsuario();
-      const usuarioId = usuario?.email || usuario?.id || usuario?.nombre || 'usuario_invitado';
-
-      await alternarFavorito(lugarId, usuarioId);
+      await alternarFavorito(lugarId);
       // Elimina la tarjeta inmediatamente del estado local
       setLugaresFavoritos((prev) => prev.filter((item) => item.id !== lugarId));
     } catch (error) {
-      console.error('Error al quitar de favoritos:', error);
+      console.warn('No se pudo quitar el favorito:', error);
     }
   };
 
@@ -133,6 +136,32 @@ export default function FavoritosPantalla() {
           style={[styles.centerContainer, { backgroundColor: colores.fondo }]}
         >
           <ActivityIndicator size="large" color="#0284c7" />
+        </SafeAreaView>
+      </SafeAreaProvider>
+    );
+  }
+
+  if (error) {
+    return (
+      <SafeAreaProvider>
+        <SafeAreaView
+          style={[styles.centerContainer, { backgroundColor: colores.fondo }]}
+        >
+          <Ionicons name="cloud-offline-outline" size={48} color={colores.textoSecundario} />
+          <Text style={[styles.emptyTitle, { color: colores.textoPrincipal }]}>
+            No se pudieron cargar tus favoritos
+          </Text>
+          <Text style={[styles.emptySubtext, { color: colores.textoSecundario }]}>
+            {error}
+          </Text>
+          <TouchableOpacity
+            accessibilityRole="button"
+            style={styles.botonReintentar}
+            onPress={() => void cargarFavoritos()}
+          >
+            <Ionicons name="refresh" size={17} color="#FFF" />
+            <Text style={styles.textoReintentar}>Reintentar</Text>
+          </TouchableOpacity>
         </SafeAreaView>
       </SafeAreaProvider>
     );
@@ -239,7 +268,18 @@ export default function FavoritosPantalla() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 28, gap: 10 },
+  botonReintentar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginTop: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+    borderRadius: 8,
+    backgroundColor: '#0284c7',
+  },
+  textoReintentar: { color: '#FFF', fontSize: 14, fontWeight: '700' },
   card: { borderRadius: 12, marginBottom: 16, overflow: 'hidden', borderWidth: 1, elevation: 2 },
   cardImage: { width: '100%', height: 160 },
   cardContent: { padding: 14 },

@@ -2,7 +2,7 @@ import { AudioSource } from 'expo-audio';
 import { Directory, File, Paths } from 'expo-file-system';
 import { fetch } from 'expo/fetch';
 
-import { AUDIO_LOCAL, Audioguia } from '../data/audioguias';
+import type { Audioguia } from '../data/audioguias';
 import { actualizarEstado, leerEstado } from './storage';
 
 export interface ProgresoDescarga {
@@ -11,10 +11,9 @@ export interface ProgresoDescarga {
   porcentaje: number | null;
 }
 
-// Fuente de audio resuelta para una audioguía, en orden de prioridad:
+// Fuente de audio resuelta para una audioguía:
 // 1. archivo descargado por el usuario (escucha sin conexión)
-// 2. audio de demostración empaquetado con la app (require de Metro)
-// 3. URL oficial remota (streaming / descarga)
+// 2. URL oficial informada por la API (streaming / descarga)
 export type FuenteAudio = AudioSource;
 
 function carpetaAudios(): Directory {
@@ -32,6 +31,12 @@ export async function obtenerDescargaLocal(id: string): Promise<string | null> {
     (elemento): elemento is File => elemento instanceof File && elemento.name.startsWith(`${id}.`)
   );
   return archivo?.exists ? archivo.uri : null;
+}
+
+export async function obtenerDescargasLocales(): Promise<Record<string, string>> {
+  const estado = await leerEstado();
+  const entradas = Object.entries(estado.descargas).filter(([, uri]) => new File(uri).exists);
+  return Object.fromEntries(entradas);
 }
 
 export async function descargarAudio(
@@ -101,12 +106,10 @@ export async function eliminarDescarga(id: string): Promise<void> {
   });
 }
 
-// Devuelve una fuente reproducible para la guía: primero la descarga local,
-// luego el audio de demostración empaquetado y, si existe, la URL remota.
+// Devuelve una fuente reproducible: primero la descarga local y luego la URL de la API.
 export async function resolverFuenteReproduccion(guia: Audioguia): Promise<FuenteAudio | null> {
   const descarga = await obtenerDescargaLocal(guia.id);
   if (descarga) return descarga;
-  if (guia.id in AUDIO_LOCAL) return AUDIO_LOCAL[guia.id];
   if (guia.audioUrl) return guia.audioUrl;
   return null;
 }
