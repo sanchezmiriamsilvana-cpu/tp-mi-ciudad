@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "tp-mi-ciudad",
+    "name": "Mi Ciudad - Colón",
     "slug": "tp-mi-ciudad",
     "scheme": "miciudad",
     "version": "1.0.0",
@@ -16,7 +16,7 @@
       }
     },
     "android": {
-      "package": "com.miciudad.colon",
+      "package": "ar.edu.uner.miciudad",
       "config": {
         "googleMaps": {
           "apiKey": "AIzaSyDgh5KMFmHarSV2qTE7aByROvULl_bWb1w"

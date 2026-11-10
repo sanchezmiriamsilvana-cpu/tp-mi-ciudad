@@ -23,11 +23,58 @@ import {
   abrirMapaNativo,
   Coordenadas,
 } from '../../servicios/ubicacion';
+import { BASE_URL } from '../../servicios/api';
 
 import { useTema } from '../../contexto/TemaContext';
 import BrujulaFlecha from '../componentes/BrujulaFlecha';
 
 const DIAS_SEMANA = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+
+//  Imagen de respaldo fija y pública
+const IMAGEN_DEFAULT = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSYwl49SBaAWa5x5iCzdte_NsHghIRZiSWyphHOVNp6aw&s';
+
+//  Helper para limpiar URLs de localhost y apuntar a tu IP (BASE_URL)
+const normalizarUrl = (raw: any): string => {
+  if (!raw || typeof raw !== 'string' || !raw.trim()) return IMAGEN_DEFAULT;
+  let url = raw.trim();
+  if (url.includes('localhost:3000')) {
+    const urlLimpia = BASE_URL.replace(/\/$/, '');
+    return url.replace('http://localhost:3000', urlLimpia);
+  }
+  return url;
+};
+
+//  Helper que garantiza un arreglo (string[]) válido
+const obtenerListaImagenes = (imagenes: any): string[] => {
+  if (!imagenes) return [IMAGEN_DEFAULT];
+
+  if (typeof imagenes === 'string' && imagenes.trim().startsWith('[')) {
+    try {
+      imagenes = JSON.parse(imagenes);
+    } catch {}
+  }
+
+  if (Array.isArray(imagenes)) {
+    const filtradas = imagenes
+      .map(normalizarUrl)
+      .filter((u) => u && u.length > 0);
+    return filtradas.length > 0 ? filtradas : [IMAGEN_DEFAULT];
+  }
+
+  if (typeof imagenes === 'string') {
+    return [normalizarUrl(imagenes)];
+  }
+
+  return [IMAGEN_DEFAULT];
+};
+
+// 🎧 Helper que detecta si el atractivo cuenta con audioguía
+const tieneAudioguia = (lugar: any): boolean => {
+  if (!lugar) return false;
+  const audio = lugar.audioguia || lugar.audioUrl || lugar.audio || lugar.audiolibro;
+  if (typeof audio === 'string') return audio.trim().length > 0;
+  return Boolean(audio);
+};
 
 export default function DetalleLugarPantalla() {
   const { colores } = useTema();
@@ -49,7 +96,7 @@ export default function DetalleLugarPantalla() {
         const res = await obtenerLugarPorId(id);
         setDetalleLugar(res.datos);
 
-        //  2. Cargar favoritos específicos del usuario activo
+        // 2. Cargar favoritos específicos del usuario activo en SQLite
         const usr = await obtenerUsuario();
         const usrId = usr?.email || 'usuario_invitado';
 
@@ -73,7 +120,7 @@ export default function DetalleLugarPantalla() {
     cargarDetalle();
   }, [id]);
 
-  //  Manejo de favorito asociándolo a la cuenta del usuario activo
+  // Manejo de favorito asociándolo a la cuenta del usuario activo
   const handleToggleFavorito = async () => {
     if (!id) return;
     const token = await obtenerToken();
@@ -111,10 +158,8 @@ export default function DetalleLugarPantalla() {
     );
   }
 
-  // Normalización de imágenes
-  const listaImagenes: string[] = Array.isArray(detalleLugar.imagenes)
-    ? detalleLugar.imagenes
-    : [detalleLugar.imagenes as any];
+  //  Normalización de imágenes garantizada
+  const listaImagenes: string[] = obtenerListaImagenes(detalleLugar.imagenes);
 
   return (
     <SafeAreaProvider>
@@ -126,7 +171,7 @@ export default function DetalleLugarPantalla() {
             <Ionicons name="arrow-back" size={24} color="#FFF" />
           </TouchableOpacity>
 
-          {/* Galería de Imágenes */}
+          {/* Galería de Imágenes o Imagen única */}
           {listaImagenes.length > 1 ? (
             <FlatList
               horizontal
@@ -134,11 +179,19 @@ export default function DetalleLugarPantalla() {
               keyExtractor={(_, index) => index.toString()}
               showsHorizontalScrollIndicator={false}
               renderItem={({ item }) => (
-                <Image source={{ uri: item }} style={styles.detailImageGallery} />
+                <Image
+                  source={{ uri: item }}
+                  style={styles.detailImageGallery}
+                  resizeMode="cover"
+                />
               )}
             />
           ) : (
-            <Image source={{ uri: listaImagenes [0] }} style={styles.detailImage} />
+            <Image
+              source={{ uri: listaImagenes[0] }}
+              style={styles.detailImage}
+              resizeMode="cover"
+            />
           )}
 
           <View style={styles.detailBody}>
@@ -162,6 +215,17 @@ export default function DetalleLugarPantalla() {
 
             {/* Botones de Acción Rápida */}
             <View style={styles.actionRow}>
+              {/* 🎧 Botón Escuchar Audioguía (solo si el lugar la tiene) */}
+              {tieneAudioguia(detalleLugar) && (
+                <TouchableOpacity
+                  style={[styles.actionBtn, { backgroundColor: '#8b5cf6' }]}
+                  onPress={() => router.push('/audioguias' as any)}
+                >
+                  <Ionicons name="headset" size={18} color="#FFF" />
+                  <Text style={styles.actionBtnText}>Audioguía</Text>
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
                 style={[styles.actionBtn, { backgroundColor: '#0284c7' }]}
                 onPress={() =>
@@ -275,8 +339,21 @@ const styles = StyleSheet.create({
     padding: 8,
     borderRadius: 20,
   },
-  detailImage: { width: '100%', height: 240, borderRadius: 12, marginTop: 12, marginBottom: 12 },
-  detailImageGallery: { width: 280, height: 200, borderRadius: 12, marginTop: 12, marginRight: 10 },
+  detailImage: {
+    width: '100%',
+    height: 250,
+    borderRadius: 12,
+    marginTop: 12,
+    marginBottom: 16,
+  },
+  detailImageGallery: {
+    width: 280,
+    height: 250,
+    borderRadius: 12,
+    marginTop: 12,
+    marginRight: 10,
+    marginBottom: 16,
+  },
   detailBody: { paddingBottom: 20 },
   titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   detailTitle: { fontSize: 24, fontWeight: 'bold', flex: 1, marginRight: 8 },
