@@ -1,5 +1,14 @@
 import React, { useState } from 'react';
-import { Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Linking,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -7,21 +16,68 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTema } from '../../../contexto/TemaContext';
 import DateStrip from '../components/DateStrip';
 import EventoCard from '../components/EventoCard';
+import { useEventoDetalle } from '../hooks/useEventoDetalle';
 import { useEventos } from '../hooks/useEventos';
 
 export default function AgendaEventosScreen({ modo }: { modo?: 'tab' } = {}) {
   const { colores } = useTema();
   const params = useLocalSearchParams<{ eventId?: string }>();
   const enPestana = modo === 'tab';
+  const idDetalle = typeof params.eventId === 'string' ? params.eventId : undefined;
+  const esDetalle = !enPestana && Boolean(idDetalle);
+
   const agenda = useEventos();
+  const detalle = useEventoDetalle(idDetalle, { habilitado: esDetalle });
+
   const [anticipaciones, setAnticipaciones] = useState<Record<string, number>>({});
-  const eventoDetalle = !enPestana && typeof params.eventId === 'string'
-    ? agenda.eventos.find((evento) => evento.id === params.eventId)
+
+  const eventoDetalle = esDetalle
+    ? detalle.evento ?? agenda.eventos.find((evento) => evento.id === idDetalle)
     : undefined;
   const eventosVisibles = eventoDetalle ? [eventoDetalle] : agenda.eventosDelDia;
+  const proximosVisibles = agenda.proximosEventos.filter(
+    (evento) => !eventosVisibles.some((visible) => visible.id === evento.id)
+  );
+
+  const cargando = esDetalle ? detalle.cargando && !eventoDetalle : agenda.cargando;
+  const errorCarga = esDetalle
+    ? eventoDetalle
+      ? null
+      : detalle.error
+    : agenda.eventos.length === 0
+      ? agenda.error
+      : null;
+  const errorActualizacion = !esDetalle && agenda.eventos.length > 0 ? agenda.error : null;
+  const refrescando = esDetalle
+    ? detalle.cargando && Boolean(eventoDetalle)
+    : agenda.refrescando;
+  const alReintentar = esDetalle ? detalle.recargar : agenda.recargar;
+  const alRefrescar = esDetalle ? detalle.recargar : agenda.refrescar;
+
   const fechaTitulo = new Intl.DateTimeFormat('es-AR', {
     weekday: 'long', day: 'numeric', month: 'long',
   }).format(agenda.fechaSeleccionada);
+
+  function renderEvento(evento: (typeof eventosVisibles)[number], clavePrefijo = '') {
+    return (
+      <EventoCard
+        key={`${clavePrefijo}${evento.id}`}
+        evento={evento}
+        recordatorioActivo={Boolean(agenda.recordatorios[evento.id])}
+        ocupado={agenda.ocupado === evento.id}
+        anticipacionMinutos={anticipaciones[evento.id] ?? 60}
+        onCambiarAnticipacion={(minutos) =>
+          setAnticipaciones((actuales) => ({ ...actuales, [evento.id]: minutos }))
+        }
+        onAlternarRecordatorio={() =>
+          void agenda.alternarRecordatorio(evento, anticipaciones[evento.id] ?? 60)
+        }
+        onAbrirDetalle={() =>
+          router.push({ pathname: '/agenda-eventos', params: { eventId: evento.id } })
+        }
+      />
+    );
+  }
 
   return (
     <SafeAreaView
@@ -45,7 +101,7 @@ export default function AgendaEventosScreen({ modo }: { modo?: 'tab' } = {}) {
         </View>
       )}
 
-      {!eventoDetalle && (
+      {!esDetalle && (
         <View style={styles.selectorFecha}>
           <Text style={[styles.fechaSeleccionada, { color: colores.textoPrincipal }]}>{fechaTitulo}</Text>
           <DateStrip
@@ -66,58 +122,85 @@ export default function AgendaEventosScreen({ modo }: { modo?: 'tab' } = {}) {
         </View>
       )}
 
-      {agenda.error && (
+      {agenda.aviso && (
         <View style={styles.mensajeError}>
-          <Text accessibilityRole="alert" style={styles.textoError}>{agenda.error}</Text>
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Cerrar mensaje" onPress={agenda.limpiarError}>
+          <Text accessibilityRole="alert" style={styles.textoError}>{agenda.aviso}</Text>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Cerrar mensaje" onPress={agenda.limpiarAviso}>
             <Ionicons name="close" size={19} color="#9f2e2e" />
           </TouchableOpacity>
         </View>
       )}
 
-      <ScrollView contentContainerStyle={styles.lista}>
-        {!eventoDetalle && <Text style={[styles.encuentros, { color: colores.textoPrincipal }]}>{eventosVisibles.length ? 'Eventos del día' : 'Sin eventos este día'}</Text>}
-        {eventosVisibles.map((evento) => (
-          <EventoCard
-            key={evento.id}
-            evento={evento}
-            recordatorioActivo={Boolean(agenda.recordatorios[evento.id])}
-            ocupado={agenda.ocupado === evento.id}
-            anticipacionMinutos={anticipaciones[evento.id] ?? 60}
-            onCambiarAnticipacion={(minutos) => setAnticipaciones((actuales) => ({ ...actuales, [evento.id]: minutos }))}
-            onAlternarRecordatorio={() => void agenda.alternarRecordatorio(evento, anticipaciones[evento.id] ?? 60)}
-            onAbrirDetalle={() => router.push({ pathname: '/agenda-eventos', params: { eventId: evento.id } })}
-          />
-        ))}
-
-        {!eventoDetalle && (
-          <>
-            <Text style={[styles.encuentros, { color: colores.textoPrincipal, marginTop: 18 }]}>Próximos eventos</Text>
-            {agenda.proximosEventos.length === 0 && (
-              <Text style={[styles.sinEventos, { color: colores.textoSecundario }]}>No hay eventos próximos publicados.</Text>
-            )}
-            {agenda.proximosEventos.map((evento) => (
-              <EventoCard
-                key={`proximo-${evento.id}`}
-                evento={evento}
-                recordatorioActivo={Boolean(agenda.recordatorios[evento.id])}
-                ocupado={agenda.ocupado === evento.id}
-                anticipacionMinutos={anticipaciones[evento.id] ?? 60}
-                onCambiarAnticipacion={(minutos) => setAnticipaciones((actuales) => ({ ...actuales, [evento.id]: minutos }))}
-                onAlternarRecordatorio={() => void agenda.alternarRecordatorio(evento, anticipaciones[evento.id] ?? 60)}
-                onAbrirDetalle={() => router.push({ pathname: '/agenda-eventos', params: { eventId: evento.id } })}
-              />
-            ))}
-          </>
-        )}
-
-        {eventoDetalle && (
-          <TouchableOpacity accessibilityRole="button" onPress={() => router.replace('/agenda-eventos')} style={styles.volverAgenda}>
-            <Ionicons name="calendar-outline" size={17} color="#0284c7" />
-            <Text style={styles.volverTexto}>Volver a la agenda</Text>
+      {errorActualizacion && (
+        <View style={styles.mensajeError}>
+          <Text accessibilityRole="alert" style={styles.textoError}>{errorActualizacion}</Text>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Reintentar carga" onPress={() => void agenda.refrescar()}>
+            <Text style={styles.reintentarEnLinea}>Reintentar</Text>
           </TouchableOpacity>
-        )}
-      </ScrollView>
+        </View>
+      )}
+
+      {cargando ? (
+        <View style={styles.estadoCentro}>
+          <ActivityIndicator size="large" color="#0284c7" />
+          <Text style={[styles.textoEstado, { color: colores.textoSecundario }]}>
+            {esDetalle ? 'Cargando evento…' : 'Cargando agenda…'}
+          </Text>
+        </View>
+      ) : errorCarga ? (
+        <View style={styles.estadoCentro}>
+          <Ionicons name="cloud-offline-outline" size={42} color={colores.textoSecundario} />
+          <Text style={[styles.tituloEstado, { color: colores.textoPrincipal }]}>
+            {esDetalle ? 'No se pudo cargar el evento' : 'No se pudo cargar la agenda'}
+          </Text>
+          <Text style={[styles.textoEstado, { color: colores.textoSecundario }]}>{errorCarga}</Text>
+          <TouchableOpacity accessibilityRole="button" onPress={() => void alReintentar()} style={styles.botonReintentar}>
+            <Ionicons name="refresh" size={17} color="#fff" />
+            <Text style={styles.textoReintentar}>Reintentar</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.lista}
+          refreshControl={
+            <RefreshControl
+              refreshing={refrescando}
+              onRefresh={() => void alRefrescar()}
+              colors={['#0284c7']}
+              tintColor="#0284c7"
+            />
+          }
+        >
+          {!eventoDetalle && (
+            <Text style={[styles.encuentros, { color: colores.textoPrincipal }]}>
+              {eventosVisibles.length ? 'Eventos del día' : 'Sin eventos este día'}
+            </Text>
+          )}
+          {eventosVisibles.map((evento) => renderEvento(evento))}
+          {eventosVisibles.length === 0 && agenda.eventos.length === 0 && (
+            <Text style={[styles.sinEventos, { color: colores.textoSecundario }]}>
+              No hay eventos publicados por el momento.
+            </Text>
+          )}
+
+          {!eventoDetalle && agenda.eventos.length > 0 && (
+            <>
+              <Text style={[styles.encuentros, { color: colores.textoPrincipal, marginTop: 18 }]}>Próximos eventos</Text>
+              {proximosVisibles.length === 0 && (
+                <Text style={[styles.sinEventos, { color: colores.textoSecundario }]}>No hay eventos próximos publicados.</Text>
+              )}
+              {proximosVisibles.map((evento) => renderEvento(evento, 'proximo-'))}
+            </>
+          )}
+
+          {eventoDetalle && (
+            <TouchableOpacity accessibilityRole="button" onPress={() => router.replace('/agenda-eventos')} style={styles.volverAgenda}>
+              <Ionicons name="calendar-outline" size={17} color="#0284c7" />
+              <Text style={styles.volverTexto}>Volver a la agenda</Text>
+            </TouchableOpacity>
+          )}
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
@@ -137,6 +220,12 @@ const styles = StyleSheet.create({
   abrirAjustes: { fontSize: 12, color: '#0284c7', fontWeight: '700' },
   mensajeError: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingHorizontal: 18, paddingVertical: 8 },
   textoError: { flex: 1, fontSize: 12, color: '#9f2e2e' },
+  reintentarEnLinea: { fontSize: 12, color: '#0284c7', fontWeight: '700' },
+  estadoCentro: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, paddingBottom: 80, gap: 10 },
+  tituloEstado: { fontSize: 17, fontWeight: '800', textAlign: 'center' },
+  textoEstado: { fontSize: 13, lineHeight: 19, textAlign: 'center' },
+  botonReintentar: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 8, paddingHorizontal: 18, paddingVertical: 11, borderRadius: 6, backgroundColor: '#0284c7' },
+  textoReintentar: { color: '#fff', fontSize: 13, fontWeight: '700' },
   lista: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 112, flexGrow: 1 },
   encuentros: { fontSize: 14, fontWeight: '800', marginBottom: 11, textTransform: 'capitalize' },
   sinEventos: { fontSize: 12, marginBottom: 11 },
