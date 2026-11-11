@@ -85,19 +85,6 @@ La aplicación acompaña a turistas y residentes en el descubrimiento de atracti
    * Abrir la aplicación **Expo Go** en Android y escanear el código QR que figura en la terminal.
    * En iOS, escanear el QR desde la cámara nativa.
 
----
-
-## 📦 Compilación de APK (Release)
-
-Para generar el archivo instalable autónomo (`.apk`) mediante EAS Build:
-
-```bash
-# Iniciar sesión en Expo CLI
-npx eas-cli login
-
-# Compilar para Android (perfil preview / APK)
-npx eas-cli build --platform android --profile preview
-```
 
 ---
 
