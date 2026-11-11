@@ -85,6 +85,11 @@ La aplicación acompaña a turistas y residentes en el descubrimiento de atracti
    * Abrir la aplicación **Expo Go** en Android y escanear el código QR que figura en la terminal.
    * En iOS, escanear el QR desde la cámara nativa.
 
+---
+##  Video Explicativo Grupal 
+
+Pueden observar el video explicativo del Grupo 15 en el siguiente enlace: https://drive.google.com/file/d/1Bgg4qsQcxgEtrswKKHFksZ6Hl2Vijvmd/view?usp=drive_link
+
 
 ---
 
